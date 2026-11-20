@@ -55,8 +55,16 @@
 #include <CoreFoundation/CFUserNotification.h>
 #endif
 
+// cosmergon-pov: upstream 6 MiB plus the level data of the 48 x 48 map, which stays in the
+// zone (about 2.3 MiB: reject 0.63, segs 0.49, lines 0.39, sectors 0.28, sides 0.21, rest 0.3;
+// sizes from COSMERGON.md), rounded up to 9. Zone overflow ends in Z_Malloc's I_Error.
+#ifdef POV_UPSTREAM_LIMITS
 #define DEFAULT_RAM 6 /* MiB */
 #define MIN_RAM     6  /* MiB */
+#else
+#define DEFAULT_RAM 9 /* MiB */
+#define MIN_RAM     9  /* MiB */
+#endif
 
 
 typedef struct atexit_listentry_s atexit_listentry_t;

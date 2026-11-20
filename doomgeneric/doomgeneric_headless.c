@@ -17,6 +17,10 @@
 #include <unistd.h>
 
 #include "doomgeneric.h"
+#include "z_zone.h"
+
+// cosmergon-pov: high water marks of the renderer's fixed arrays (r_plane.c)
+extern int pov_hw_drawsegs, pov_hw_visplanes, pov_hw_openings, pov_hw_solidsegs;
 
 // Virtual milliseconds added per drawn frame (one game tic is 1000/35 ms).
 #define POV_MS_PER_FRAME 29
@@ -142,6 +146,9 @@ void DG_DrawFrame(void)
 
         fprintf(stderr, "headless: frames=%lu real_ms=%.1f ms_per_frame=%.3f\n",
                 s_frames, ms, ms / (double)s_frames);
+        fprintf(stderr, "headless: highwater drawsegs=%d visplanes=%d openings=%d solidsegs=%d\n",
+                pov_hw_drawsegs, pov_hw_visplanes, pov_hw_openings, pov_hw_solidsegs);
+        fprintf(stderr, "headless: zone_free_or_purgable_bytes=%d\n", Z_FreeMemory());
         exit(0);
     }
 }

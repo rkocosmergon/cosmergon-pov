@@ -13,7 +13,9 @@ doomgeneric.map
 
 # cosmergon-pov
 assets/freedoom/*.wad
-build-headless/
-cosmergon-pov-headless
+build-headless*/
+cosmergon-pov-headless*
+assets/cosmergon.wad
 out/
 *.ppm
+__pycache__/

@@ -48,7 +48,29 @@
 #define SIL_TOP			2
 #define SIL_BOTH		3
 
+// cosmergon-pov: the renderer limits are derived for the fixed 48 x 48 map
+// (see COSMERGON.md, "Renderer limits"). POV_UPSTREAM_LIMITS builds the
+// original values for comparison (make -f Makefile.headless UPSTREAM_LIMITS=1).
+#ifdef POV_UPSTREAM_LIMITS
 #define MAXDRAWSEGS		256
+#define MAXVISPLANES		128
+#define MAXOPENINGS		SCREENWIDTH*64
+#define MAXSEGS			32
+#else
+#define POV_GRID		48
+#define POV_SECTORS		(POV_GRID*POV_GRID)
+// One line per cell edge: 2 * 48 * 49. At most one of its two segs faces the viewer.
+#define POV_LINES		(2*POV_GRID*(POV_GRID+1))
+// Every front facing seg stores at most one drawseg; factor 2 allows one split per seg.
+#define MAXDRAWSEGS		(2*POV_LINES)
+// R_Subsector finds <= 2 planes per subsector, R_CheckPlane duplicates <= 2 per drawseg.
+#define MAXVISPLANES		(2*POV_SECTORS + 2*MAXDRAWSEGS)
+// A column is covered by <= 95 lines (47 + 47 interior + 1 border), x2 for column rounding
+// at shared vertices, x2 for the top and the bottom clip array copied per drawseg.
+#define MAXOPENINGS		(SCREENWIDTH*2*2*(2*POV_GRID-1))
+// Solid posts are separated by at least one column: <= SCREENWIDTH/2, plus 2 sentinels.
+#define MAXSEGS			(SCREENWIDTH/2 + 2)
+#endif
 
 
 

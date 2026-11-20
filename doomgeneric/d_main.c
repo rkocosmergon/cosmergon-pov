@@ -196,7 +196,13 @@ void D_Display (void)
     }
 
     // save the current screen if about to wipe
+    // cosmergon-pov: POV_NO_WIPE (headless build) never wipes, so the first frame of a level
+    // is the level and not a melt from uninitialised memory.
+#ifdef POV_NO_WIPE
+    if (0)
+#else
     if (gamestate != wipegamestate)
+#endif
 		{
 		wipe = true;
 		wipe_StartScreen(0, 0, SCREENWIDTH, SCREENHEIGHT);

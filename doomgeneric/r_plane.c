@@ -42,14 +42,14 @@ planefunction_t		ceilingfunc;
 //
 
 // Here comes the obnoxious "visplane".
-#define MAXVISPLANES	128
+// cosmergon-pov: MAXVISPLANES moved to r_defs.h
 visplane_t		visplanes[MAXVISPLANES];
 visplane_t*		lastvisplane;
 visplane_t*		floorplane;
 visplane_t*		ceilingplane;
 
 // ?
-#define MAXOPENINGS	SCREENWIDTH*64
+// cosmergon-pov: MAXOPENINGS moved to r_defs.h
 short			openings[MAXOPENINGS];
 short*			lastopening;
 
@@ -302,6 +302,10 @@ R_CheckPlane
 	return pl;		
     }
 	
+    // cosmergon-pov: no check here upstream, a full array was overwritten silently
+    if (lastvisplane - visplanes == MAXVISPLANES)
+	I_Error ("R_CheckPlane: no more visplanes (%i)", MAXVISPLANES);
+
     // make a new visplane
     lastvisplane->height = pl->height;
     lastvisplane->picnum = pl->picnum;
@@ -357,6 +361,9 @@ R_MakeSpans
 // R_DrawPlanes
 // At the end of each frame.
 //
+// cosmergon-pov: high water marks of the fixed arrays, printed by the headless build.
+int pov_hw_drawsegs, pov_hw_visplanes, pov_hw_openings, pov_hw_solidsegs;
+
 void R_DrawPlanes (void)
 {
     visplane_t*		pl;
@@ -365,6 +372,11 @@ void R_DrawPlanes (void)
     int			stop;
     int			angle;
     int                 lumpnum;
+
+    // cosmergon-pov: statistics only
+    if (ds_p - drawsegs > pov_hw_drawsegs) pov_hw_drawsegs = ds_p - drawsegs;
+    if (lastvisplane - visplanes > pov_hw_visplanes) pov_hw_visplanes = lastvisplane - visplanes;
+    if (lastopening - openings > pov_hw_openings) pov_hw_openings = lastopening - openings;
 				
 #ifdef RANGECHECK
     if (ds_p - drawsegs > MAXDRAWSEGS)

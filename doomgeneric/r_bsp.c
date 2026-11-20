@@ -78,7 +78,7 @@ typedef	struct
 } cliprange_t;
 
 
-#define MAXSEGS		32
+// cosmergon-pov: MAXSEGS moved to r_defs.h
 
 // newend is one past the last valid seg
 cliprange_t*	newend;
@@ -114,8 +114,13 @@ R_ClipSolidWallSegment
 	    // Post is entirely visible (above start),
 	    //  so insert a new clippost.
 	    R_StoreWallRange (first, last);
+	    // cosmergon-pov: upstream wrote past solidsegs[] when full
+	    if (newend == &solidsegs[MAXSEGS])
+		I_Error ("R_ClipSolidWallSegment: no more solid segs (%i)", MAXSEGS);
 	    next = newend;
 	    newend++;
+	    if (newend - solidsegs > pov_hw_solidsegs)
+		pov_hw_solidsegs = newend - solidsegs;
 	    
 	    while (next != start)
 	    {

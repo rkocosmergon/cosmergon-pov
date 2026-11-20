@@ -27,6 +27,9 @@
 
 // Visplane related.
 extern  short*		lastopening;
+// cosmergon-pov: needed by the overflow check in r_segs.c
+extern  short		openings[];
+extern  int		pov_hw_drawsegs, pov_hw_visplanes, pov_hw_openings, pov_hw_solidsegs;
 
 
 typedef void (*planefunction_t) (int top, int bottom);

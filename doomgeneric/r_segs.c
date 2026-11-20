@@ -368,6 +368,14 @@ void R_RenderSegLoop (void)
 // A wall segment will be drawn
 //  between start and stop pixels (inclusive).
 //
+// cosmergon-pov: upstream checked the openings array only at the end of the frame
+// (R_DrawPlanes, RANGECHECK), after the writes had already run past the array.
+static void POV_NeedOpenings (int count)
+{
+    if ((lastopening - openings) + count > MAXOPENINGS)
+	I_Error ("R_StoreWallRange: no more openings (%i)", MAXOPENINGS);
+}
+
 void
 R_StoreWallRange
 ( int	start,
@@ -379,9 +387,9 @@ R_StoreWallRange
     fixed_t		vtop;
     int			lightnum;
 
-    // don't overflow and crash
+    // cosmergon-pov: upstream silently dropped the wall here (wrong picture)
     if (ds_p == &drawsegs[MAXDRAWSEGS])
-	return;		
+	I_Error ("R_StoreWallRange: no more drawsegs (%i)", MAXDRAWSEGS);
 		
 #ifdef RANGECHECK
     if (start >=viewwidth || start > stop)
@@ -605,6 +613,7 @@ R_StoreWallRange
 	{
 	    // masked midtexture
 	    maskedtexture = true;
+	    POV_NeedOpenings (rw_stopx - rw_x);
 	    ds_p->maskedtexturecol = maskedtexturecol = lastopening - rw_x;
 	    lastopening += rw_stopx - rw_x;
 	}
@@ -715,6 +724,7 @@ R_StoreWallRange
     if ( ((ds_p->silhouette & SIL_TOP) || maskedtexture)
 	 && !ds_p->sprtopclip)
     {
+	POV_NeedOpenings (rw_stopx - start);
 	memcpy (lastopening, ceilingclip+start, 2*(rw_stopx-start));
 	ds_p->sprtopclip = lastopening - start;
 	lastopening += rw_stopx - start;
@@ -723,6 +733,7 @@ R_StoreWallRange
     if ( ((ds_p->silhouette & SIL_BOTTOM) || maskedtexture)
 	 && !ds_p->sprbottomclip)
     {
+	POV_NeedOpenings (rw_stopx - start);
 	memcpy (lastopening, floorclip+start, 2*(rw_stopx-start));
 	ds_p->sprbottomclip = lastopening - start;
 	lastopening += rw_stopx - start;	

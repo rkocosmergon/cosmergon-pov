@@ -19,3 +19,4 @@ assets/cosmergon.wad
 out/
 *.ppm
 __pycache__/
+assets/freedoom/COPYING.txt

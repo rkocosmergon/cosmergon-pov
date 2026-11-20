@@ -19,6 +19,7 @@
 
 
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -34,6 +35,9 @@
 #include "r_local.h"
 
 #include "doomstat.h"
+#ifdef POV_VIEW_ONLY
+#include "pov_control.h"	// cosmergon-pov
+#endif
 
 
 
@@ -316,9 +320,17 @@ void R_ClearSprites (void)
 // R_NewVisSprite
 //
 vissprite_t	overflowsprite;
+int		pov_hw_vissprites;	// cosmergon-pov: high water mark, printed by the headless build
 
 vissprite_t* R_NewVisSprite (void)
 {
+    // cosmergon-pov: the limit is derived (r_things.h); exceeding it is a bug, not a quiet drop.
+#ifndef POV_UPSTREAM_LIMITS
+    if (vissprite_p == &vissprites[MAXVISSPRITES])
+	I_Error ("R_NewVisSprite: no more vissprites (%d)", MAXVISSPRITES);
+    if (vissprite_p - vissprites + 1 > pov_hw_vissprites)
+	pov_hw_vissprites = (int)(vissprite_p - vissprites) + 1;
+#endif
     if (vissprite_p == &vissprites[MAXVISSPRITES])
 	return &overflowsprite;
     
@@ -491,7 +503,9 @@ void R_ProjectSprite (mobj_t* thing)
     tx = -(gyt+gxt); 
 
     // too far off the side?
-    if (abs(tx)>(tz<<2))
+    // cosmergon-pov: tz up to the map diagonal (8689 units) times 4 overflows 32 bits
+    // (found by UBSan via the control channel); compare in 64 bits.
+    if ((int64_t) abs(tx) > ((int64_t) tz << 2))
 	return;
     
     // decide which patch to use for sprite relative to player
@@ -975,7 +989,13 @@ void R_DrawMasked (void)
     // draw the psprites on top of everything
     //  but does not draw on side views
     if (!viewangleoffset)		
-	R_DrawPlayerSprites ();
+    {
+	// cosmergon-pov: the control channel shows no weapon
+#ifdef POV_VIEW_ONLY
+	if (!POV_ControlEnabled ())
+#endif
+	    R_DrawPlayerSprites ();
+    }
 }
 
 

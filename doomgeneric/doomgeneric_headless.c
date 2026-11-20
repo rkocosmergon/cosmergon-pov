@@ -4,10 +4,15 @@
 //
 // Environment:
 //   POV_OUT     directory for the frames (required, must exist and be writable)
-//   POV_EVERY   write every n-th drawn frame (default 35)
-//   POV_FRAMES  stop cleanly after this many drawn frames (default 700)
+//   POV_EVERY   write every n-th drawn frame (default 35; with -pov-control 1)
+//   POV_FRAMES  stop cleanly after this many drawn frames (default 700; with -pov-control no limit)
+//   POV_CONTROL_LIVE  with -pov-control: 1 = never block on stdin, draw a frame every tick
+//                     (the way a window platform reads); unset/0 = block until `next`/`quit`/EOF
+//   POV_LIVE_MS       live mode: real milliseconds slept per frame (default 10)
 
 #include <errno.h>
+#include <limits.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +22,7 @@
 #include <unistd.h>
 
 #include "doomgeneric.h"
+#include "pov_control.h"
 #include "z_zone.h"
 
 // cosmergon-pov: high water marks of the renderer's fixed arrays (r_plane.c)
@@ -30,6 +36,8 @@ static unsigned long s_frames = 0;
 static unsigned long s_every = 35;
 static unsigned long s_max_frames = 700;
 static const char *s_out_dir = NULL;
+static int s_control = 0;
+static unsigned long s_live_ms = 10;
 static struct timespec s_start;
 
 static unsigned long env_ulong(const char *name, unsigned long fallback)
@@ -127,9 +135,36 @@ void DG_Init(void)
             exit(2);
         }
     }
-    s_every = env_ulong("POV_EVERY", 35);
-    s_max_frames = env_ulong("POV_FRAMES", 700);
+    s_control = POV_ControlEnabled();
+    s_every = env_ulong("POV_EVERY", s_control ? 1 : 35);
+    s_max_frames = env_ulong("POV_FRAMES", s_control ? ULONG_MAX : 700);
+    if (s_control)
+    {
+        const char *live = getenv("POV_CONTROL_LIVE");
+
+        POV_ControlSetLive(live != NULL && strcmp(live, "1") == 0);
+        s_live_ms = env_ulong("POV_LIVE_MS", 10);
+    }
     clock_gettime(CLOCK_MONOTONIC, &s_start);
+}
+
+static void finish(void)
+{
+    double ms = elapsed_ms();
+
+    // control mode: the last drawn frame is always written (live mode draws far more than it writes)
+    if (s_control && s_frames > 0 && s_frames % s_every != 0)
+    {
+        write_frame(s_frames);
+    }
+
+    fprintf(stderr, "headless: frames=%lu real_ms=%.1f ms_per_frame=%.3f\n",
+            s_frames, ms, s_frames > 0 ? ms / (double)s_frames : 0.0);
+    fprintf(stderr, "headless: highwater drawsegs=%d visplanes=%d openings=%d solidsegs=%d vissprites=%d\n",
+            pov_hw_drawsegs, pov_hw_visplanes, pov_hw_openings, pov_hw_solidsegs, pov_hw_vissprites);
+    fprintf(stderr, "headless: zone_free_or_purgable_bytes=%d\n", Z_FreeMemory());
+    POV_ControlSummary(stderr);
+    exit(0);
 }
 
 void DG_DrawFrame(void)
@@ -142,14 +177,55 @@ void DG_DrawFrame(void)
     }
     if (s_frames >= s_max_frames)
     {
-        double ms = elapsed_ms();
+        finish();
+    }
+    if (s_control && POV_ControlIsLive())
+    {
+        struct timespec pause = { (time_t)(s_live_ms / 1000), (long)(s_live_ms % 1000) * 1000000L };
 
-        fprintf(stderr, "headless: frames=%lu real_ms=%.1f ms_per_frame=%.3f\n",
-                s_frames, ms, ms / (double)s_frames);
-        fprintf(stderr, "headless: highwater drawsegs=%d visplanes=%d openings=%d solidsegs=%d\n",
-                pov_hw_drawsegs, pov_hw_visplanes, pov_hw_openings, pov_hw_solidsegs);
-        fprintf(stderr, "headless: zone_free_or_purgable_bytes=%d\n", Z_FreeMemory());
-        exit(0);
+        nanosleep(&pause, NULL);
+    }
+}
+
+// Control input: stdin. wait == 0 never blocks (poll), wait != 0 blocks until data or end.
+int DG_ControlRead(unsigned char *buf, int max, int wait)
+{
+    for (;;)
+    {
+        ssize_t n;
+
+        if (!wait)
+        {
+            struct pollfd pfd = { 0, POLLIN, 0 };
+            int r = poll(&pfd, 1, 0);
+
+            if (r < 0)
+            {
+                if (errno == EINTR)
+                {
+                    continue;
+                }
+                return -1;
+            }
+            if (r == 0)
+            {
+                return 0;
+            }
+        }
+        n = read(0, buf, (size_t)max);
+        if (n < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return -1;
+        }
+        if (n == 0)
+        {
+            return -1;
+        }
+        return (int)n;
     }
 }
 
@@ -180,6 +256,10 @@ int main(int argc, char **argv)
     doomgeneric_Create(argc, argv);
     for (;;)
     {
+        if (POV_ControlDone())
+        {
+            finish();
+        }
         doomgeneric_Tick();
     }
     return 0;

@@ -22,7 +22,13 @@
 
 
 
+// cosmergon-pov: one vissprite per thing in view; the control channel has at most 256 things
+// (ids 0..255), the player is never linked into a sector. Overflow is an error (r_things.c).
+#ifdef POV_UPSTREAM_LIMITS
 #define MAXVISSPRITES  	128
+#else
+#define MAXVISSPRITES  	256
+#endif
 
 extern vissprite_t	vissprites[MAXVISSPRITES];
 extern vissprite_t*	vissprite_p;

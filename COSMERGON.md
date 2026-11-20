@@ -92,7 +92,7 @@ Highwater marks of one run are printed at exit (`headless: highwater ...`).
 | `MAXOPENINGS` | r_plane.c:52, check :378 | 20480 (`SCREENWIDTH*64`) | 121600 | a screen column is covered by at most 95 lines (47 + 47 inner + 1 border) x2 for rounding of column borders at shared vertices x2 for the top and bottom clip array copied per drawseg: `SCREENWIDTH*380` | checked only at the end of the frame, after writing past the array | `I_Error` before each write (r_segs.c, `POV_NeedOpenings`) |
 | `MAXSEGS` (solidsegs) | r_bsp.c:81 | 32 | 162 | posts are separated by at least one column: at most 160, plus 2 sentinels (`SCREENWIDTH/2 + 2`) | no check, wrote past the array | `I_Error` (r_bsp.c, insertion) |
 | zone memory | i_system.c:58-59 | 6 MiB | 9 MiB | 6 MiB upstream plus this map's level data, which stays in the zone: 2.29 MiB (vertexes 19208, segs 516096, subsectors 36864, sectors 294912, lines 413952, sides 221184, nodes 119756, blockmap 27656 + links 18432, reject 663552, line lists 73728 bytes; struct sizes from `sizeof` in this build) | `Z_Malloc` ends in `I_Error` | unchanged (`I_Error`); `MIN_RAM` = `DEFAULT_RAM`, so a failed allocation says so |
-| `MAXVISSPRITES` | r_things.h:25, r_things.c:322 | 128 | 128 | one thing (the player, which is not drawn) | extra sprites dropped (graceful) | unchanged; not reachable |
+| `MAXVISSPRITES` | r_things.h:25, r_things.c:322 | 128 | 256 | one vissprite per thing in view; the control channel (P3) has at most 256 things (ids 0..255), the player is never linked into a sector | extra sprites dropped (quietly) | `I_Error` |
 | `MAXSPECIALCROSS`, `MAXINTERCEPTS` | p_local.h:155,219 | | | no special lines, no shooting, no input | | not reachable |
 | `short` blockmap offsets | p_setup.c:84 (signed) | 32767 | | the lump has 13828 shorts; the generator refuses more than 32767 | | generator error |
 | fixed-point distance | r_main.c `SlopeDiv` (`num<<3` in 32 bits) | | | deltas must stay below 8192 units; the map is 6144 wide | | not reachable |
@@ -109,3 +109,62 @@ Other upstream changes in this package: `d_main.c` (`POV_NO_WIPE`), `r_plane.h` 
     python3 -m unittest tests.test_make_map      # generator, standard library only
     bash tests/test_map_render.sh                # engine: every pattern x 3 views, plus the old-limits counter-check
     POV_PNG=1 bash tests/test_map_render.sh      # also writes out/map-<pattern>-<view>.png
+
+## Control channel (package P3)
+
+With `-pov-control` the engine only displays. The level (the fixed map) is loaded once; after that no
+game tic runs: no thinkers, no input, no monsters, no status bar, no weapon, no menu, no wipe
+(`pov_control.c`, switched in `d_main.c` under `POV_VIEW_ONLY`). Without the switch the build behaves
+as before.
+
+### Lines
+
+Text lines on stdin, fields separated by blanks or tabs, at most 255 bytes, printable ASCII, LF or CRLF.
+Coordinates are in cells of the 48 x 48 window: x to the east, y to the north, (0, 0) is the south-west
+corner; angles in degrees, 0 = east, counter-clockwise.
+
+| Line | Meaning | Limits |
+|---|---|---|
+| `cell <x> <y> <kind>` | kind of one cell: `empty`, `cell`, `wall`, `tower` | x, y integers 0..47 |
+| `row <y> <48 characters>` | a whole row, west to east: `.` empty, `#` cell, `=` wall, `T` tower | exactly 48 characters |
+| `thing <id> <kind> <x> <y> <angle>` | places or moves a thing: `marauder`, `loot` | id 0..255; 0 <= x, y < 48; angle within +-1,000,000 |
+| `gone <id>` | removes a thing (unknown id: nothing happens) | id 0..255 |
+| `cam <x> <y> <angle>` | camera; the eye is 41 units above the floor of the cell it stands in | as `thing` |
+| `light <level>` | light level of all sectors | 0..255 |
+| `next [n]` | draw n frames (default 1) with the state reached so far | 1..1,000,000 |
+| `quit` | end | |
+
+A line that is not exactly one of these is rejected as a whole, counted, and changes nothing; the first
+20 reasons go to stderr. At the end stderr carries `control: lines=<n> rejected=<m>`. No input ends the
+program with an error: tests feed 20,000 random valid lines, every class of invalid line, and noise
+(`tests/test_control.py`, also under AddressSanitizer and UBSan).
+
+The plan named `floor <x> <y> <height>`. Built is `cell` with a kind: the kind fixes height, wall texture
+and floor flat together (table `s_kind` in `pov_control.c`), so a writer cannot send a height the limits
+were not derived for. Heights equal `tools/pov_measures.py` (the test compares both files).
+
+### Reading
+
+Blocking (default): the engine reads until `next`, `quit` or end of input, so the frames depend only on
+the input (same input, same bytes; chunking of the pipe does not matter). Live (`POV_CONTROL_LIVE=1`):
+reading never blocks, a frame is drawn every tick; this is how a window platform reads. The platform
+supplies `DG_ControlRead()`.
+
+### Headless output
+
+With `-pov-control` the headless build writes every frame (`POV_EVERY` default 1) and has no frame limit.
+A frame is 768 kB: a run with thousands of frames needs `POV_EVERY` or `POV_FRAMES`. On 2026-11-20 two
+such runs wrote 3.8 GB into a RAM-backed `/tmp` and the machine killed the session; the long test now
+writes every 64th frame.
+
+### Upstream changes
+
+`d_main.c` (tick and start), `r_things.c` (no weapon; vissprite overflow is an error; 64-bit compare in
+`R_ProjectSprite`, an overflow of `tz << 2` found by UBSan), `r_things.h` (limit 256). Each is marked
+`// cosmergon-pov:`.
+
+### Tests
+
+    python3 -m unittest tests.test_control
+    make -C doomgeneric -f Makefile.headless SANITIZE=1
+    POV_SANITIZED=1 POV_BIN=$PWD/doomgeneric/cosmergon-pov-headless-sanitize python3 -m unittest tests.test_control

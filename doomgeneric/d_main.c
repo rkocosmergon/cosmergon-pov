@@ -73,6 +73,9 @@
 #include "statdump.h"
 
 #include "d_main.h"
+#ifdef POV_VIEW_ONLY
+#include "pov_control.h"  // cosmergon-pov
+#endif
 
 //
 // D-DoomLoop()
@@ -410,6 +413,15 @@ boolean D_GrabMouseCallback(void)
 
 void doomgeneric_Tick()
 {
+#ifdef POV_VIEW_ONLY
+    // cosmergon-pov: with -pov-control the world is driven from outside (pov_control.c): no
+    // game tics, no HUD, no menu, no status bar, no wipe.
+    if (POV_ControlEnabled())
+    {
+        POV_ControlTick();
+        return;
+    }
+#endif
     // frame syncronous IO operations
     I_StartFrame ();
 
@@ -1726,6 +1738,16 @@ void D_DoomMain (void)
         }
         autostart = true;
     }
+
+#ifdef POV_VIEW_ONLY
+    // cosmergon-pov: -pov-control starts the map at once (no title, no demo loop).
+    if (POV_ControlEnabled())
+    {
+        startepisode = 1;
+        startmap = 1;
+        autostart = true;
+    }
+#endif
 
     // Undocumented:
     // Invoked by setup to test the controls.

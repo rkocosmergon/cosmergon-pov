@@ -853,7 +853,7 @@ static void init_world(void)
     // Full screen 3D view, no status bar. The palette is set once (nothing else does it here).
     R_SetViewSize(11, 0);
     I_SetPalette(W_CacheLumpName("PLAYPAL", PU_CACHE));
-    s_dirty = 0;
+    s_dirty = 1;        // live mode: the first picture is drawn without waiting for a line
     s_ready = 1;
 }
 
@@ -912,8 +912,10 @@ void POV_ControlTick(void)
         s_pending--;
         render_frame();
     }
-    else if (s_live)
+    else if (s_live && s_dirty)
     {
+        // live: a picture only when something changed. What costs is drawing, so the cost
+        // follows the writer's rate and a still world costs nothing (measured, COSMERGON.md).
         render_frame();
     }
 }

@@ -675,14 +675,14 @@ class LiveMode(unittest.TestCase):
         expect_c = first_frame("cell 27 24 cell\nthing 1 marauder 30.5 24.5 180\nnext\n")
         with tempfile.TemporaryDirectory() as out:
             proc = subprocess.Popen(command(FLAT_WAD), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                                    stderr=subprocess.PIPE, env=engine_env(out, live=True, every=5))
+                                    stderr=subprocess.PIPE, env=engine_env(out, live=True, every=1))
             err_holder = []
             reader = threading.Thread(target=lambda: err_holder.append(proc.stderr.read()))
             reader.start()
             try:
-                time.sleep(0.8)                       # nothing written: the engine must keep drawing
+                time.sleep(0.8)                       # nothing written: one picture, then it waits
                 n0 = len([n for n in os.listdir(out) if n.endswith(".ppm")])
-                self.assertGreaterEqual(n0, 3, "the engine did not draw while there was no input")
+                self.assertEqual(n0, 1, "live draws once at the start and then only on a change")
                 proc.stdin.write(b"cell 27 24 ce")    # half a line: nothing may change
                 proc.stdin.flush()
                 time.sleep(0.4)
@@ -701,13 +701,8 @@ class LiveMode(unittest.TestCase):
             frames = read_frames(out)
         self.assertEqual(rc, 0, err)
         self.assertIn("control: lines=2 rejected=0", err)
-        self.assertGreater(len(frames), 8)
-        self.assertEqual(frames[0], expect_a)             # before any change
-        self.assertIn(expect_b, frames)                   # after the cell, before the thing
-        self.assertEqual(frames[-1], expect_c)            # the last change is shown before the end
-        first_b = frames.index(expect_b)
-        self.assertTrue(all(f == expect_a for f in frames[:first_b]))
-        self.assertGreater(first_b, 2)                    # the half line did not change the picture
+        # one picture per change: the start, the cell, the thing; the half line drew nothing
+        self.assertEqual(frames, [expect_a, expect_b, expect_c])
 
     def test_live_with_a_file_on_stdin_ends_by_itself(self):
         with tempfile.TemporaryDirectory() as out:

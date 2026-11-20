@@ -168,3 +168,36 @@ writes every 64th frame.
     python3 -m unittest tests.test_control
     make -C doomgeneric -f Makefile.headless SANITIZE=1
     POV_SANITIZED=1 POV_BIN=$PWD/doomgeneric/cosmergon-pov-headless-sanitize python3 -m unittest tests.test_control
+
+## The window (package P4)
+
+`doomgeneric_pov.c` (SDL2, no sound, no SDL2_mixer), built with `make -f Makefile.pov` where SDL2 is
+installed (the device; `sdl2-compat` works). The engine's objects are listed once in `pov_sources.mk`
+for both makefiles; `pov_stdin.c` reads the control input for both platform layers.
+
+- Only `-pov-control`; no keyboard, no mouse, no dialog. App id / window class `com.cosmergon.pov`.
+- Without `-iwad` the program takes `freedoom1.wad` and `cosmergon.wad` from the folder it lies in.
+- `POV_FPS` steps a second (default 35). A step draws only when a line changed something, once at
+  the start, and shows the last picture again when the window is uncovered or resized.
+- At the end stderr carries frames, work per frame, the slowest frame and the share spent handing
+  the picture to the window system.
+
+### Measured on the device (2026-11-20, 4 cores, 1440 x 900 at 60 Hz, Hyprland 0.56.2, window 640 x 400)
+
+Percent of one core, CPU time from `/proc/<pid>/stat`. The compositor alone, without the window: 4.80
+(600 s). Scene: `tools/pov_walk.py` (a third of the squares built on, 8 marauders, camera walking).
+
+| Run | Pictures a second | Program | Compositor | Added by the window |
+|---|---|---|---|---|
+| 600 s, every step drawn | 35 | 21.65 | 9.52 | 26.4 |
+| 45 s, every step drawn | 20 | 12.21 | 7.57 | 15.0 |
+| 45 s, every step drawn | 12 | 7.43 | 6.88 | 9.5 |
+| 45 s, every step drawn, software renderer | 35 | 23.38 | 9.50 | 28.1 |
+| 45 s, drawn on change, writer at 35 lines a second | 35 | 21.26 | 9.52 | 26.0 |
+| 45 s, drawn on change, writer at 8 | 8 | 4.45 | 6.24 | 5.9 |
+| 45 s, drawn on change, writer at 5 | 5 | 3.31 | 5.69 | 4.2 |
+
+A picture costs about 6 ms, half of it the engine, half the hand-over to the window system; the slowest
+of 20,997 pictures took 16.9 ms, 10 took longer than half a step (14.3 ms). The cost is the number of
+pictures: that is why a step without a change draws nothing. The dashboard's view steps 5 to 8 times a
+second. Tools: `tools/measure_device.sh`, `tools/probe_device.sh`.

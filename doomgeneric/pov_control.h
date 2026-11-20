@@ -22,7 +22,7 @@ int POV_ControlEnabled(void);
 
 // Platform choice, call before the first tick. live = 0: reading blocks until `next`,
 // `quit` or end of input (deterministic). live = 1: reading never blocks, a frame is drawn
-// every tick.
+// in every tick in which something changed (and once at the start).
 void POV_ControlSetLive(int live);
 int POV_ControlIsLive(void);
 

@@ -6,13 +6,13 @@
 //   POV_OUT     directory for the frames (required, must exist and be writable)
 //   POV_EVERY   write every n-th drawn frame (default 35; with -pov-control 1)
 //   POV_FRAMES  stop cleanly after this many drawn frames (default 700; with -pov-control no limit)
-//   POV_CONTROL_LIVE  with -pov-control: 1 = never block on stdin, draw a frame every tick
+//   POV_CONTROL_LIVE  with -pov-control: 1 = never block on stdin, draw a frame in every tick
+//                     in which something changed
 //                     (the way a window platform reads); unset/0 = block until `next`/`quit`/EOF
-//   POV_LIVE_MS       live mode: real milliseconds slept per frame (default 10)
+//   POV_LIVE_MS       live mode: real milliseconds slept per tick (default 10)
 
 #include <errno.h>
 #include <limits.h>
-#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -179,54 +179,6 @@ void DG_DrawFrame(void)
     {
         finish();
     }
-    if (s_control && POV_ControlIsLive())
-    {
-        struct timespec pause = { (time_t)(s_live_ms / 1000), (long)(s_live_ms % 1000) * 1000000L };
-
-        nanosleep(&pause, NULL);
-    }
-}
-
-// Control input: stdin. wait == 0 never blocks (poll), wait != 0 blocks until data or end.
-int DG_ControlRead(unsigned char *buf, int max, int wait)
-{
-    for (;;)
-    {
-        ssize_t n;
-
-        if (!wait)
-        {
-            struct pollfd pfd = { 0, POLLIN, 0 };
-            int r = poll(&pfd, 1, 0);
-
-            if (r < 0)
-            {
-                if (errno == EINTR)
-                {
-                    continue;
-                }
-                return -1;
-            }
-            if (r == 0)
-            {
-                return 0;
-            }
-        }
-        n = read(0, buf, (size_t)max);
-        if (n < 0)
-        {
-            if (errno == EINTR)
-            {
-                continue;
-            }
-            return -1;
-        }
-        if (n == 0)
-        {
-            return -1;
-        }
-        return (int)n;
-    }
 }
 
 void DG_SleepMs(uint32_t ms)
@@ -261,6 +213,13 @@ int main(int argc, char **argv)
             finish();
         }
         doomgeneric_Tick();
+        if (s_control && POV_ControlIsLive())
+        {
+            // live: one tick every POV_LIVE_MS, whether it drew or not
+            struct timespec pause = { (time_t)(s_live_ms / 1000), (long)(s_live_ms % 1000) * 1000000L };
+
+            nanosleep(&pause, NULL);
+        }
     }
     return 0;
 }

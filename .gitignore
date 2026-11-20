@@ -10,3 +10,10 @@ Debug/
 Release/
 Build/
 doomgeneric.map
+
+# cosmergon-pov
+assets/freedoom/*.wad
+build-headless/
+cosmergon-pov-headless
+out/
+*.ppm

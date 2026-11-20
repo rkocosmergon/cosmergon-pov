@@ -264,7 +264,7 @@ void I_Quit (void)
 #endif
 }
 
-#if !defined(_WIN32) && !defined(__MACOSX__) && !defined(__DJGPP__)
+#if !defined(_WIN32) && !defined(__MACOSX__) && !defined(__DJGPP__) && !defined(POV_NO_ERROR_DIALOG)
 #define ZENITY_BINARY "/usr/bin/zenity"
 
 // returns non-zero if zenity is available
@@ -347,7 +347,7 @@ static int ZenityErrorBox(char *message)
     return result;
 }
 
-#endif /* !defined(_WIN32) && !defined(__MACOSX__) && !defined(__DJGPP__) */
+#endif /* !defined(_WIN32) && !defined(__MACOSX__) && !defined(__DJGPP__) && !defined(POV_NO_ERROR_DIALOG) */
 
 
 //
@@ -409,7 +409,11 @@ void I_Error (char *error, ...)
     // game was not run from the console (and the user will
     // therefore be unable to otherwise see the message).
     if (exit_gui_popup && !I_ConsoleStdout())
-#ifdef _WIN32
+#if defined(POV_NO_ERROR_DIALOG)
+    {
+        // headless build: never open a dialog, the message stays on stderr
+    }
+#elif defined(_WIN32)
     {
         wchar_t wmsgbuf[512];
 

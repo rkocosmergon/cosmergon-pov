@@ -1,0 +1,49 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
+name: CI
+
+on:
+  push:
+    branches: ["cosmergon"]
+  pull_request:
+    branches: ["cosmergon"]
+
+permissions:
+  contents: read
+
+jobs:
+  headless:
+    name: Build without window, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Game data (Freedoom, pinned checksum)
+        run: bash scripts/download-freedoom.sh
+
+      - name: Build (no window, no sound)
+        run: make -C doomgeneric -f Makefile.headless -j4
+
+      - name: The fixed map
+        # Generated, not committed; the measures of the themes read it.
+        run: python3 tools/make_map.py
+
+      - name: Tests (Python, standard library only)
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+
+      - name: Smoke test and map render
+        run: |
+          bash tests/test_headless.sh
+          bash tests/test_map_render.sh
+
+  window:
+    name: Window program compiles (SDL2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: SDL2 headers
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libsdl2-dev
+
+      - name: Build
+        run: make -C doomgeneric -f Makefile.pov -j4

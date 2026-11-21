@@ -244,6 +244,7 @@ int main(int argc, char **argv)
             struct timespec pause = { (time_t)(s_live_ms / 1000), (long)(s_live_ms % 1000) * 1000000L };
 
             nanosleep(&pause, NULL);
+            s_virtual_ms += s_live_ms;      // a live tick lasts that long on the virtual clock (cloud drift)
         }
     }
     return 0;

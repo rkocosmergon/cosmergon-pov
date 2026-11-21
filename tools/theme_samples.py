@@ -7,6 +7,7 @@ muster-heute-1.png (no theme) and the overview uebersicht.png. Standard library 
     python3 tools/theme_samples.py [--out out/muster] [--size 672x324]
     python3 tools/theme_samples.py --fine          # out/muster-fein: 672x324 and 1280x640
     python3 tools/theme_samples.py --detail        # out/muster-detail: six viewpoints, A and B, two sizes, sheets
+    python3 tools/theme_samples.py --sky           # out/muster-himmel: the sky over the day, all round, clouds drifting
 
 The scene is sent over the control channel (cells, no things: the sprites are still the IWAD's and
 would be wrong in a theme's palette). Three viewpoints: 1 eye level on open ground, 2 along the
@@ -22,6 +23,7 @@ a pixel) and the size is part of every file name: muster-A-1-672x324.png, uebers
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import shutil
 import subprocess
@@ -159,8 +161,28 @@ def run_engine(theme_wad: str | None, work: str, size: str | None = None, views=
     return [os.path.join(work, f) for f in frames]
 
 
-def sheet(ppms: list[list[str]], out_png: str, gap: int = 12) -> None:
-    """Grid: one column per theme, one row per viewpoint, a thin light margin between."""
+FONT = {  # 3 x 5 digits and a few signs, one string a row
+    "0": "111101101101111", "1": "010110010010111", "2": "111001111100111", "3": "111001111001111",
+    "4": "101101111001001", "5": "111100111001111", "6": "111100111101111", "7": "111001001001001",
+    "8": "111101111101111", "9": "111101111001111", ":": "000010000010000", " ": "000000000000000",
+    "s": "011100110001110", "+": "000010111010000",
+}
+
+
+def stamp(canvas: list, text: str, x0: int, y0: int, scale: int = 2, ink: bytes = bytes((26, 35, 50))) -> None:
+    """Draw `text` (FONT) into the canvas rows (bytearrays of RGB) at x0, y0."""
+    for k, ch in enumerate(text):
+        for i, bit in enumerate(FONT[ch]):
+            if bit == "1":
+                for dy in range(scale):
+                    for dx in range(scale):
+                        x = x0 + (k * 4 + i % 3) * scale + dx
+                        canvas[y0 + (i // 3) * scale + dy][x * 3:x * 3 + 3] = ink
+
+
+def sheet(ppms: list[list[str]], out_png: str, gap: int = 12, labels: list[list[str]] | None = None) -> None:
+    """Grid: one column per theme, one row per viewpoint, a thin light margin between. `labels` (same shape)
+    are written into the margin above each picture (gap at least 14)."""
     images = [[ppm2png.read_ppm(p) for p in col] for col in ppms]
     w, h = images[0][0][0], images[0][0][1]
     cols, rows = len(images), len(images[0])
@@ -173,6 +195,8 @@ def sheet(ppms: list[list[str]], out_png: str, gap: int = 12) -> None:
             x0, y0 = gap + c * (w + gap), gap + r * (h + gap)
             for y in range(h):
                 canvas[y0 + y][x0 * 3:(x0 + w) * 3] = pix[y * w * 3:(y + 1) * w * 3]
+            if labels:
+                stamp(canvas, labels[c][r], x0, y0 - 12)
     ppm2png.write_png(out_png, total_w, total_h, b"".join(bytes(row) for row in canvas))
 
 
@@ -228,6 +252,97 @@ def write_detail(out: str, size: str) -> None:
         shutil.rmtree(work, ignore_errors=True)
 
 
+# ---- the sky (--sky): the same field at other times, all round, clouds drifting
+SKY_TIMES = (360, 480, 720, 960, 1110, 1200, 1380, 180)        # 06:00 08:00 12:00 16:00 18:30 20:00 23:00 03:00
+SKY_EYE = (24.5, 24.5)                                          # open ground: nothing within 4 cells
+
+
+def sky_scene() -> list[str]:
+    """Few low groups around the eye, spread on all sides at 6..15 cells, so that the sky is free in every
+    direction (the field of the other samples is dense)."""
+    glider = [(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)]
+    block = [(0, 0), (1, 0), (0, 1), (1, 1)]
+    blinker = [(0, 0), (1, 0), (2, 0)]
+    cells: dict[tuple[int, int], str] = {}
+    for k in range(10):
+        ang = math.radians(k * 36 + 11)
+        cx, cy = int(round(24 + (6 + (k * 7) % 10) * math.cos(ang))), int(round(24 + (6 + (k * 7) % 10) * math.sin(ang)))
+        for dx, dy in (glider, block, blinker)[k % 3]:
+            cells[(cx + dx, cy + dy)] = "own" if k % 4 == 1 else "cell"
+    for y in range(14, 30):
+        cells[(8, y)] = "wall"
+    cells[(8, 13)] = cells[(8, 30)] = "tower"
+    cells[(36, 40)] = cells[(40, 36)] = "tower"
+    return ["cell %d %d %s" % (x, y, k) for (x, y), k in sorted(cells.items())]
+SKY_NOON = 720
+
+
+def berlin_minutes() -> int:
+    """Minutes since midnight now in Berlin (the sender's default; the program itself has no clock)."""
+    import datetime
+    import zoneinfo
+    now = datetime.datetime.now(zoneinfo.ZoneInfo("Europe/Berlin"))
+    return now.hour * 60 + now.minute
+
+
+def clock(minute: int) -> str:
+    return "%02d:%02d" % (minute // 60, minute % 60)
+
+
+def sky_run(wad: str, work: str, size: str, steps: list[tuple[int, float, float, int]]) -> list[str]:
+    """One engine run, one picture per step (minute, camera angle, cloud seconds, frame count 1)."""
+    lines = sky_scene()
+    for minute, angle, seconds, _n in steps:
+        lines += ["daytime %d" % minute, "clouds %d" % round(seconds), "cam %.2f %.2f %.2f" % (SKY_EYE + (angle,)), "next"]
+    lines.append("quit")
+    binary = os.path.join(ROOT, "doomgeneric", "cosmergon-pov-headless")
+    cmd = [binary, "-iwad", os.path.join(ROOT, "assets", "freedoom", "freedoom1.wad"),
+           "-file", os.path.join(ROOT, "assets", "cosmergon.wad"), "-pov-theme", wad,
+           "-pov-control", "-warp", "1", "1", "-pov-size", size]
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(work)
+    proc = subprocess.run(cmd, input="\n".join(lines) + "\n", text=True, env=dict(os.environ, POV_OUT=work),
+                          capture_output=True, check=False)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stderr)
+        raise SystemExit("engine failed (%d)" % proc.returncode)
+    return [os.path.join(work, f) for f in sorted(os.listdir(work)) if f.endswith(".ppm")]
+
+
+def write_sky(out: str, size: str) -> None:
+    """Per theme A and B: the day (8 times), all round (4 directions at 17:00), the clouds (5 steps of 10 s),
+    and every picture alone."""
+    import sky_art
+    os.makedirs(out, exist_ok=True)
+    work = os.path.join(out, "_ppm")
+    try:
+        for letter, name in THEME_ORDER[:2]:
+            wad = os.path.join(out, "_theme-%s.wad" % name)
+            with open(wad, "wb") as handle:
+                handle.write(make_theme.wad_bytes(make_theme.build_theme(name)))
+            day = sky_run(wad, work, size, [(m, sky_art.view_towards(m), 0, 1) for m in SKY_TIMES])
+            for m, ppm in zip(SKY_TIMES, day):
+                w, h, pix = ppm2png.read_ppm(ppm)
+                ppm2png.write_png(os.path.join(out, "einzel-%s-%s-%s.png" % (letter, size, clock(m).replace(":", ""))), w, h, pix)
+            sheet([day[:4], day[4:]], os.path.join(out, "tageslauf-%s-%s.png" % (letter, size)), gap=18,
+                  labels=[[clock(m) for m in SKY_TIMES[:4]], [clock(m) for m in SKY_TIMES[4:]]])
+            base = sky_art.view_towards(960)
+            round_ = sky_run(wad, work, size, [(960, base + 90 * k, 0, 1) for k in range(4)])
+            sheet([round_[:2], round_[2:]], os.path.join(out, "rundblick-%s-%s.png" % (letter, size)), gap=18,
+                  labels=[["16:00 +0", "16:00 +90"], ["16:00 +180", "16:00 +270"]])
+            drift = sky_run(wad, work, size, [(SKY_NOON, view_noon(), 10 * k, 1) for k in range(5)])
+            sheet([drift], os.path.join(out, "wolkenzug-%s-%s.png" % (letter, size)), gap=18,
+                  labels=[["%d s" % (10 * k) for k in range(5)]])
+            os.remove(wad)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def view_noon() -> float:
+    import sky_art
+    return sky_art.view_towards(SKY_NOON)
+
+
 def texture_sheets(out: str) -> None:
     """Every variant of every kind side by side, 1 texel to 1 point (a texture is 256 points, 128 units):
     texturbogen-<theme>-<n>.png. Wall faces east/west and one row of the shaded sides, the tops, the ground."""
@@ -269,11 +384,18 @@ def main() -> int:
     ap.add_argument("--out", default=None)
     ap.add_argument("--size", help="<width>x<height> in points (default: the engine's 320 x 200 shown at 640 x 400)")
     ap.add_argument("--fine", action="store_true", help="672x324 and 1280x640 into out/muster-fein")
+    ap.add_argument("--sky", action="store_true",
+                    help="the sky over the day, all round and the drifting clouds, themes A and B, 672x324 and "
+                         "1280x640, into out/muster-himmel")
     ap.add_argument("--detail", action="store_true",
                     help="six viewpoints, themes A and B, 672x324 and 1280x640, overview and texture sheets "
                          "into out/muster-detail")
     args = ap.parse_args()
-    if args.detail:
+    if args.sky:
+        out = os.path.abspath(args.out or os.path.join(ROOT, "out", "muster-himmel"))
+        for size in ("672x324", "1280x640"):
+            write_sky(out, size)
+    elif args.detail:
         out = os.path.abspath(args.out or os.path.join(ROOT, "out", "muster-detail"))
         for size in ("672x324", "1280x640"):
             write_detail(out, size)

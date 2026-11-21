@@ -31,6 +31,7 @@
 
 #include "r_local.h"
 #include "r_sky.h"
+#include "pov_sky.h"
 
 
 
@@ -392,6 +393,10 @@ void R_DrawPlanes (void)
 		 lastopening - openings);
 #endif
 
+    // cosmergon-pov: the sky of a theme with POVSKY lumps is drawn point by point (pov_sky.c)
+    if (POV_SkyActive())
+	POV_SkyBegin();
+
     for (pl = visplanes ; pl < lastvisplane ; pl++)
     {
 	if (pl->minx > pl->maxx)
@@ -399,6 +404,18 @@ void R_DrawPlanes (void)
 
 	
 	// sky flat
+	if (pl->picnum == skyflatnum && POV_SkyActive())
+	{
+	    for (x=pl->minx ; x <= pl->maxx ; x++)
+	    {
+		if (pl->top[x] <= pl->bottom[x])
+		{
+		    POV_SkyColumn(x, pl->top[x], pl->bottom[x]);
+		    // the id buffer is cleared for every picture: the sky is no wall (id 0)
+		}
+	    }
+	    continue;
+	}
 	if (pl->picnum == skyflatnum)
 	{
 	    // cosmergon-pov: the sky's 100 texel above the horizon always cover the upper half of the

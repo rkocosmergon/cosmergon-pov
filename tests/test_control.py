@@ -86,10 +86,10 @@ def engine_env(out, live=False, every=1):
 # Upstream behaviour that every frame shows, independent of the input (reported in COSMERGON.md):
 #  - left shift of negative values (benign with gcc, formally undefined), many places
 #  - r_draw.c:653-656 and 840-843 (R_DrawSpan, R_DrawSpanLow): span position shift wraps on purpose
-#  - r_plane.c:447-457 reads top[-1] / top[1280]: the pad entries around visplane_t.top/bottom (r_defs.h;
+#  - r_plane.c:464-474 reads top[-1] / top[1280]: the pad entries around visplane_t.top/bottom (r_defs.h;
 #    upstream: top[320] of type byte)
 UPSTREAM_UBSAN = re.compile(r"left shift of negative value|^r_draw\.c:(65[3-6]|84[0-3]):\d+: runtime error: left shift"
-                            r"|^r_plane\.c:4(4[7-9]|5[0-7]):\d+: runtime error: index -?\d+ out of bounds for type "
+                            r"|^r_plane\.c:4(6[4-9]|7[0-4]):\d+: runtime error: index -?\d+ out of bounds for type "
                             r"'(byte \[320\]|short unsigned int \[1280\])'")
 
 

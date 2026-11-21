@@ -12,6 +12,8 @@ License: GPL-2.0 (see `LICENSE`, unchanged).
 - `scripts/download-freedoom.sh`: pinned, SHA-256 checked Freedoom download.
 - `tools/ppm2png.py`: PPM to PNG (standard library only).
 - `tools/theme_art.py`, `tools/make_theme.py`, `tools/theme_samples.py`: the themes and their samples ("Themes").
+- `doomgeneric/pov_sky.c`, `tools/sky_art.py`, `tools/theme_day.py`, `tests/test_sky.py`: the sky with the time of day and
+  drifting clouds ("The sky").
 - `tests/test_headless.sh`: smoke test.
 - `tests/test_size.py`, `tools/measure_size.py`: picture size (package P5, "Picture size" below).
 - One upstream change: `doomgeneric/i_system.c` skips the zenity error dialog when
@@ -138,6 +140,8 @@ corner; angles in degrees, 0 = east, counter-clockwise.
 | `light <level>` | light level of all sectors | 0..255 |
 | `next [n]` | draw n frames (default 1) with the state reached so far | 1..1,000,000 |
 | `size <w> <h>` | picture size in points for the next frames, shown 1 : 1 (see "Picture size") | w integer 160..1280, h integer 100..800 |
+| `daytime <minutes>` | time of day in the sender's local time, minutes since midnight; only a theme with a sky reacts ("The sky"); default 720 (noon) | integer 0..1439 |
+| `clouds <seconds>` | the cloud clock: where the clouds are, seconds since their start position; only a theme with a sky reacts | integer 0..10,000,000 |
 | `origin <x> <y>` | world coordinates of cell 0, 0 of the window (default 0 0); the look of a cell follows its world position (see "Themes"). The cell lines keep using window coordinates | x, y integers within +-1,000,000 |
 | `quit` | end | |
 
@@ -276,6 +280,119 @@ dimming with distance, flat wall textures per kind and direction, floors, a sky,
   672 x 324 and 1280 x 640 to `out/muster-fein/`, `--detail` writes `out/muster-detail/` (six viewpoints in A and B,
   both sizes, the overview of A/B/C and the texture sheets). Tests: `python3 -m unittest tests.test_theme`.
 
+## The sky (package P7)
+
+A theme with the lumps `POVSKY` and `POVCLD` draws its own sky, point by point in the size of the picture
+(`pov_sky.c`, called from `R_DrawPlanes`, in place of the texture column). Without them (no theme, or an older
+theme) the sky is the IWAD's or the theme's texture as before; without a theme nothing changes (the hashes of
+`81fb3a0` and `a38a6b4` are a test).
+
+### Why not a bigger texture
+The old sky was a 1024 x 128 texture, 256 texels across the 90 degrees: at 1280 wide 5 points a texel across but
+3.2 down (and 1.6 : 1.0 at 672 x 324): the sun was an ellipse (measured, `a38a6b4`, bounding box of the sun's
+points: 119 x 83 at 672 x 324, 226 x 166 at 1280 x 640, 56 x 57 at 320 x 200, 226 x 228 at 1280 x 800) and its edge
+showed texel steps. A bigger texture would only move the ratio. Root: a point looks along `(u, v, 1)` with
+`u, v` in units of `f = width / 2`; azimuth is `viewangle + xtoviewangle[x]`, `tan(elevation) = v / sqrt(1 + u^2)`.
+Rows and columns step alike, so a disc is round at every shape, and nothing depends on a texture's resolution.
+
+### Layers (back to front)
+1. **Bands** of elevation, 16 flat colours of 3.0 degrees (`POVSKY`: palette index of band 0 at the horizon,
+   count, degrees): the calm stepped gradient. No outline between them (one class).
+2. **Stars** (night only, `stars` flag of the keys): bit 4 of the cloud layer, fixed to the world, 3 x 3 texels
+   (at least one point at 672 wide, where a point is 1.9 texels: 3 >= ceil(1.9)); colour index in the sky class
+   (no outline).
+3. **Sun** (06:00 to 19:00) or **moon** (19:00 to 06:00): a disc of angular radius 4.5 / 3.6 degrees, centre
+   `(cx - f tan(d), cy - f tan(el) / cos(d))` for the azimuth difference `d` to the view (hidden at 85 degrees or
+   more), radius `f tan(r)` points. The arc is simple, not astronomy: elevation `21 sin(pi p)` degrees (`p` the
+   share of the arc), azimuth 0 (east) at the rise through 270 (south) to 180 (west) at the set; the same arc for
+   the moon. 21 degrees because the picture has no pitch: its half angle is 25.7 degrees at 672 x 324 (26.6 at
+   1280 x 640, 32 at 1280 x 800), a higher body would never be seen. The sky is bound to the WORLD: the sun is in
+   one direction only. The moon is a crescent (the disc less a disc up and to the right).
+   The border wall of the window (512 units, 24 cells away from the middle) hides everything under about 8.7
+   degrees: the sun is above it only from about 07:45 to 17:15 and the moon from about 20:30 to 04:30 (computed from the
+   arc: the sun is hidden at 06:00, 18:30 and the moon at 20:00; the samples show sky colours there, not the body).
+4. **Clouds**: layer `POVCLD`, 4096 columns around the circle (angle >> 20) by 512 rows of `tan(elevation) * 651.9`
+   (a column of rows is walked with a fixed-point step per point, as a wall column), one byte a texel: 1 fill, 2
+   shade tone on the lower right edge, +16 star. Comic clouds (`tools/sky_art.py`: round bumps over a flat base, flatter
+   near the horizon, bigger higher up, in clusters and strays, 26 of them, same for every theme). Density: 651.9
+   texels a radian against `f` points a radian: 1.02 texels a point at the middle of 1280 wide (0.51 at 45
+   degrees off the middle, where the projection stretches: 2 points a texel), 1.94 at 672, 4.1 at 320.
+   The outline (1 point, 2 from 901 wide) is drawn by the outline pass on the finished picture, so the line has
+   the weight of every other line and no texel steps. Classes (`POVTHEME`): bands and stars 0, sun and moon 5, clouds
+   6: the pass puts the line on the lower class, outside a disc and outside a cloud, and where a cloud covers the sun
+   the line is on the sun's side. Nothing is doubled (looked at: a cloud across the sun at 672 and 1280 wide).
+
+### Clouds drift without load
+Rate: 0.25 degrees a second (one turn of the circle in 24 minutes; across the 90 degrees of the picture in 6
+minutes), "one notices it when looking": 0.70 points a second at 320 wide, 1.47 at 672, 2.79 at 1280. The clouds
+move in WHOLE POINTS (`POV_SkyDriftPoints = floor(columns * 2 pi f / 4096)`; the texture offset is the points
+turned back into columns, so the picture is a function of the points); live mode draws only when that number changed:
+**1.5 pictures a second at 672 wide, 2.8 at 1280 wide, 0.7 at 320** (measured live, 5 s: tests.test_sky.Live), at
+4 to 16 ms a picture (see Measured below): a few tenths of a percent of a core. The clock is deterministic:
+- blocking mode (headless, tests): the clouds stand where the last `clouds <seconds>` line put them (default 0);
+  the picture depends only on the input;
+- live mode: that base plus the engine's clock (`I_GetTimeMS`, a window: real time, the headless live mode: a tick
+  of `POV_LIVE_MS` virtual milliseconds).
+
+### The time of day (the bridge's part)
+The program has no clock and no time zone knowledge. The sender (the SDK's bridge) sends **`daytime <minutes>`** with
+the local time it chose (default Europe/Berlin, the user may choose another zone), minutes since midnight 0..1439.
+**Once a minute is enough** (and once at the start); the palette is mixed for that minute. Optionally `clouds
+<seconds>` at the start. Without the line the time is 720 (noon, the day palette). A line that is not an integer in
+range is rejected like any bad line.
+
+Way: **one palette per key of the day in `PLAYPAL`** (Doom's own mechanism, `I_SetPalette`) **and an integer mix of the
+two keys around the minute** in the engine (`POV_SkyPalette`, `tools/theme_day.palette_at` is the same arithmetic;
+a test compares the two against the picture). Keys (minutes): 0, 270 night; 360 dawn; 450 morning; 600 and 960 day;
+1080 evening; 1130 sunset; 1200 dusk; 1275 and 1440 night: 11 palettes, 8.4 kB. Why this and not one palette per
+minute: 1440 palettes would be 1.1 MB a theme for the same result; and not 14 fixed palettes: a step of 14 sections
+shows. How many steps: the largest change of one colour channel between two minutes is 3 of 255 levels (dusk, the
+fastest) in each of the three themes, 1 to 2 in most of the day (`tests.test_sky`, bound 4); the sender's rate (a
+minute) is the limit, a faster sender would need no more palettes (the mix has 256 steps per segment).
+Whether 3 levels a minute are visible to the eye is not tested (only looked at: not noticeable in a sheet).
+
+The light of a section (`tools/theme_day.py`): the world's colours are multiplied (night 0.68 / 0.78 / 1.0 with a
+bluish haze of 14 percent, dusk violet, sunset and dawn warm, morning and evening slightly warm, day 1), the sky
+bands, the sun, the clouds and the moon change colour. The roles (ground, border, cell, own, wall, tower) keep
+their character: a multiply keeps ratios, hues stay apart. The night is blue and bright, not dark: the mean Lab
+lightness of the six roles is 58 of 77 at noon (wueste), the stars and the moon are light on a mid blue.
+
+**Contrast, derived not set** (`tests.test_sky.Palette`, every minute, three themes): the difference of two
+colours (RGB) is multiplied per channel by `(1 - haze) * mul`, so its length falls to at most the smallest such
+factor times the day's; the bound is the DAY state's weakest pair of the six roles times the weaker factor of the
+two keys around the minute, less sqrt(3) for the rounding to whole values. Measured RGB distance of the weakest
+pair: day 51.0 (wueste), 37.9 (gelbestadt), 33.9 (blaustadt); lowest over the day 40.1, 28.8, 22.9. Lab (dE76)
+of the weakest pair on the hour: 12.9 to 16.7 (A), 9.2 to 11.9 (B), 4.8 to 7.4 (C: ground and tower are pale
+blue-grey at night, 4.8; the theme C was weak in the day too, 7.2).
+
+### Samples
+    python3 tools/theme_samples.py --sky      # out/muster-himmel/: A and B, 672x324 and 1280x640
+
+`tageslauf-<A|B>-<size>.png` (06:00 08:00 12:00 16:00 18:30 20:00 23:00 03:00, the view towards the sun or moon,
+labelled), `rundblick-...` (four directions at 16:00), `wolkenzug-...` (five pictures 10 s apart), and every
+picture of the day alone (`einzel-...-<hhmm>.png`). The scene is a sparse field around the eye (24.5, 24.5).
+`theme_samples.berlin_minutes()` gives the Berlin minutes for a tool that wants "now" (the program does not).
+
+### Measured (`tools/measure_size.py`, as above; and an empty field with a wall, the camera turning, sky-heavy)
+ms a picture, 400 pictures, 3 runs, before (`a38a6b4`) / after:
+
+| Size | Scene | Mean before | Mean after | Slowest before | Slowest after |
+|---|---|---|---|---|---|
+| 672 x 324 | wueste, the usual scene | 4.10 | 4.19 | 11.61 | 7.26 |
+| 1280 x 800 | wueste, the usual scene | 16.47 | 15.80 | 112.46 | 22.95 |
+| 672 x 324 | wueste, sky-heavy | 3.65 | 3.86 | 6.71 | 7.00 |
+| 1280 x 800 | wueste, sky-heavy | 14.68 | 15.19 | 18.87 | 25.39 |
+
+(the slowest values are single outliers of this machine and differ between runs; the means are the measure.) Without
+a theme nothing changed (0.54 / 1.12 / 4.38). Memory at 1280 x 800: 34.7 MB resident against 31.7 (the 2 MB cloud
+layer and the 11 palettes), the zone has 19.3 MB free of 24.
+
+### Tests
+    python3 -m unittest tests.test_sky     # the lines, no theme = no change, the sun round in four shapes,
+                                           # drift only in sky points, every palette at 25 times of the day,
+                                           # contrast bound, step of a minute, live drift, outline
+(sanitizer: as above; the known upstream class of `r_plane.c` in `tests/test_control.py` moved with the lines.)
+
 ## Picture size (package P5)
 
 The renderer draws in the size of the window, one point a pixel, square points, from 160 x 100 up to
@@ -320,7 +437,8 @@ views: identical hashes).
     a scale (tops and bottoms, texture steps, a sprite's top) stay in the range they have at 320;
   - the light: a wall's or thing's light index uses the scale normalised to 320 (`R_LightIndex`), the
     floor's light uses 320 / 2 in `R_InitLightTables`: light by distance, whatever the size;
-  - the sky: its 100 rows above the horizon always cover the upper half of the picture
+  - the sky (**without a theme**; with a theme the sky is drawn per point, see "The sky" below and ignore the
+    sun remarks here, which are SUPERSEDED by it): its 100 rows above the horizon always cover the upper half of the picture
     (`pov_sky_iscale` = 200 / viewheight texels a row; upstream `pspriteiscale` follows the width, and in
     a tall picture the sky would run out and tile). The sky texture is 1024 x 128 and is enlarged by the
     picture: the sun is an ellipse of width : height = (w / 256) : (h / 200), 1.25 at 1280 x 800 and 1.6 at

@@ -33,6 +33,7 @@
 #include "z_zone.h"
 
 #include "pov_control.h"
+#include "pov_sky.h"
 
 // ---------------------------------------------------------------------------------------
 // Measures. Must equal tools/pov_measures.py (tests/test_control.py compares them).
@@ -88,7 +89,9 @@ static int s_ready = 0;
 static int s_done = 0;
 static int s_quit = 0;
 static int s_input_done = 0;             // end of input reached, no line left
-static int s_dirty = 0;                  // changed since the last drawn frame
+static int s_dirty = 0;
+static int s_live_t0 = 0;                // I_GetTimeMS at the start (the clouds' live clock)
+static long s_drift_drawn = 0;           // cloud drift in points of the last drawn picture                  // changed since the last drawn frame
 static unsigned long s_pending = 0;      // frames still to draw for `next`
 static unsigned long s_lines = 0;
 static unsigned long s_rejected = 0;
@@ -390,7 +393,7 @@ static void commit(void)
 // ---------------------------------------------------------------------------------------
 // Parser: one line -> one validated command. Nothing is applied before the whole line is valid.
 // ---------------------------------------------------------------------------------------
-typedef enum { OP_CELL, OP_ROW, OP_THING, OP_GONE, OP_CAM, OP_LIGHT, OP_NEXT, OP_SIZE, OP_ORIGIN, OP_QUIT } op_t;
+typedef enum { OP_CELL, OP_ROW, OP_THING, OP_GONE, OP_CAM, OP_LIGHT, OP_NEXT, OP_SIZE, OP_ORIGIN, OP_DAYTIME, OP_CLOUDS, OP_QUIT } op_t;
 
 typedef struct
 {
@@ -732,6 +735,24 @@ static const char *parse_line(const unsigned char *line, size_t len, command_t *
         }
         return NULL;
     }
+    if (strcmp(tok[0], "daytime") == 0)
+    {
+        if (ntok != 2)
+        {
+            return "daytime needs <minutes>";
+        }
+        c->op = OP_DAYTIME;
+        return parse_int(tok[1], 0, 1439, &c->a) ? NULL : "daytime must be an integer 0..1439 (minutes since midnight)";
+    }
+    if (strcmp(tok[0], "clouds") == 0)
+    {
+        if (ntok != 2)
+        {
+            return "clouds needs <seconds>";
+        }
+        c->op = OP_CLOUDS;
+        return parse_int(tok[1], 0, POVC_MAX_CLOUDS, &c->a) ? NULL : "clouds must be an integer 0..10,000,000 (seconds)";
+    }
     if (strcmp(tok[0], "quit") == 0)
     {
         if (ntok != 1)
@@ -742,6 +763,15 @@ static const char *parse_line(const unsigned char *line, size_t len, command_t *
         return NULL;
     }
     return "unknown command";
+}
+
+// The colours of the time of day (a theme with a sky): set the palette again.
+static void sky_palette(void)
+{
+    unsigned char pal[768];
+
+    POV_SkyPalette(POV_SkyMinute(), pal);
+    I_SetPalette(pal);
 }
 
 static void apply(const command_t *c)
@@ -792,6 +822,21 @@ static void apply(const command_t *c)
         for (i = 0; i < POVC_CELLS; i++)
         {
             set_kind(i, s_kind_of[i]);      // the variants follow the world position
+        }
+        break;
+    case OP_DAYTIME:
+        if (POV_SkyActive())
+        {
+            POV_SkySetMinute(c->a);
+            sky_palette();
+            s_dirty = 1;
+        }
+        break;
+    case OP_CLOUDS:
+        if (POV_SkyActive())
+        {
+            POV_SkySetCloudBase(c->a * 1000.0);
+            s_dirty = 1;
         }
         break;
     case OP_QUIT:
@@ -1223,6 +1268,7 @@ static void init_world(void)
     }
     theme_init();
     variants_init();
+    POV_SkyLoad();
     // Whatever pattern the map was generated with: start with everything empty.
     for (i = 0; i < POVC_CELLS; i++)
     {
@@ -1242,7 +1288,15 @@ static void init_world(void)
     // Full picture 3D view, no status bar. The palette is set once (nothing else does it here).
     size_from_command_line();
     R_SetViewSize(11, 0);
-    I_SetPalette(W_CacheLumpName("PLAYPAL", PU_CACHE));
+    if (POV_SkyActive())
+    {
+        sky_palette();
+    }
+    else
+    {
+        I_SetPalette(W_CacheLumpName("PLAYPAL", PU_CACHE));
+    }
+    s_live_t0 = I_GetTimeMS();
     s_dirty = 1;        // live mode: the first picture is drawn without waiting for a line
     s_ready = 1;
 }
@@ -1267,6 +1321,10 @@ static void render_frame(void)
         memset(I_VideoBuffer, s_outline_index, points);
     }
     R_RenderPlayerView(&players[consoleplayer]);
+    if (POV_SkyActive())
+    {
+        s_drift_drawn = POV_SkyDriftPoints(pov_view_w);
+    }
     if (s_outline_on)
     {
         outline_pass();
@@ -1295,6 +1353,15 @@ void POV_ControlTick(void)
         return;
     }
 
+    if (s_live && POV_SkyActive())
+    {
+        // the clouds drift on the clock; a picture is due only when they moved a whole point
+        POV_SkySetCloudLive((double)(I_GetTimeMS() - s_live_t0));
+        if (POV_SkyDriftPoints(pov_view_w) != s_drift_drawn)
+        {
+            s_dirty = 1;
+        }
+    }
     pump();
     if (s_quit)
     {

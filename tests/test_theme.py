@@ -19,6 +19,7 @@ sys.path.insert(0, ROOT)
 import make_map  # noqa: E402
 import make_theme  # noqa: E402
 import theme_art as art  # noqa: E402
+import theme_day  # noqa: E402
 from tests import test_control as tc  # noqa: E402
 
 WORK = tempfile.TemporaryDirectory()
@@ -62,7 +63,7 @@ class Generator(unittest.TestCase):
     def test_lumps_have_the_sizes_of_the_format(self):
         for name in make_theme.THEMES:
             lumps = dict(make_theme.build_theme(name))
-            self.assertEqual(len(lumps["PLAYPAL"]), 14 * 768)
+            self.assertEqual(len(lumps["PLAYPAL"]), len(theme_day.KEYS) * 768)   # one palette a key of the day
             self.assertEqual(len(lumps["COLORMAP"]), 34 * 256)
             self.assertEqual(len(lumps["POVTHEME"]), 520)
             self.assertEqual(len(lumps["POVX"]), 2056)

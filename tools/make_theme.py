@@ -48,13 +48,15 @@ import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sky_art  # noqa: E402
+import theme_day  # noqa: E402
 import theme_art as art  # noqa: E402
 
 NAVY = (0x1A, 0x23, 0x32)
-SKY_ROWS = 100            # rows above the horizon that can show sky (full screen view: centre 100)
-SKY_FIRST = art.SKY_FIRST  # first palette index of the gradient: one index per row, 156..255
-SKY_COLS = 1024           # the sky texture runs once around (angle >> 22)
-SKY_HEIGHT = 128
+SKY_FIRST = art.SKY_FIRST  # first palette index of the sky bands, 156..; band 0 is at the horizon
+SKY_BANDS = 16            # bands of elevation, each a flat colour
+BAND_DEG10 = 30           # a band is 3.0 degrees: 48 degrees of elevation, flat above
+I_SKY = art.I_SKY
 
 # Palette indices: the layout is in theme_art (the pictures are made of indices).
 I_OUTLINE = art.I_OUTLINE
@@ -81,8 +83,8 @@ HALO_OF = {b: art.TW[b][1] for b, _o in BASES}
 FINE_OF = {b: art.TW[b][2] for b, _o in BASES}
 
 
-def shade(rgb):
-    return tuple(max(0, min(255, round(c * SHADE))) for c in rgb)
+def shade(rgb, factor=SHADE):
+    return tuple(max(0, min(255, round(c * factor))) for c in rgb)
 
 
 def mix(a, b, t):
@@ -111,7 +113,7 @@ THEMES = {
         "cell": "#6aa6d6", "cell_shade": "#4a88c4",
         "own": "#e8843a", "wall": "#dcb25a",
         "tower": "#f8f2de", "band": "#c8683a", "tower_top": "#c8683a",
-        "disc": "#fff8dc", "cloud": "#fbf3cc",
+        "disc": "#fff6d0", "cloud": "#fffdf2",
     },
     "blaustadt": {
         "label": "C Blaue Stadt",
@@ -144,11 +146,15 @@ def build_palette(theme: dict) -> list[tuple[int, int, int]]:
     band = hexrgb(theme["band"])
     pal[I_BAND["x"]] = band
     pal[I_BAND["y"]] = hexrgb(theme["band_shade"]) if "band_shade" in theme else shade(band)
-    for idx, key in zip(I_SHAPES, ("disc", "cloud")):
-        pal[idx] = hexrgb(theme[key])
     top, hor = hexrgb(theme["sky_top"]), hexrgb(theme["sky_horizon"])
-    for row in range(SKY_ROWS):
-        pal[SKY_FIRST + row] = mix(top, hor, row / (SKY_ROWS - 1))
+    for band in range(SKY_BANDS):
+        pal[SKY_FIRST + band] = mix(hor, top, band / (SKY_BANDS - 1))       # band 0 is at the horizon
+    cloud = hexrgb(theme["cloud"])
+    pal[I_SKY["sun"]] = hexrgb(theme["disc"])
+    pal[I_SKY["moon"]] = hexrgb(theme.get("moon", "#f6f3da"))
+    pal[I_SKY["cloud"]] = cloud
+    pal[I_SKY["shade"]] = shade(mix(cloud, top, 0.55), 0.94)       # one shade tone on a cloud's lower edge
+    pal[I_SKY["star"]] = (255, 255, 255) if theme.get("stars", 0) else mix(hor, top, 0.5)
     for trio in art.TW.values():
         for twin in trio:
             pal[twin] = NAVY
@@ -158,12 +164,23 @@ def build_palette(theme: dict) -> list[tuple[int, int, int]]:
     return pal
 
 
-def playpal(pal) -> bytes:
-    # The program does not apply its gamma table to a theme (i_video.c, pov_gamma_off): exact colours.
-    one = bytearray()
-    for r, g, b in pal:
-        one += bytes((r, g, b))
-    return bytes(one) * 14      # 14 palettes of the format; the program only uses the first
+def playpal(pals) -> bytes:
+    """One palette per key of the day (theme_day.KEYS). The program does not apply its gamma table to a theme
+    (i_video.c, pov_gamma_off): exact colours."""
+    out = bytearray()
+    for pal in pals:
+        for r, g, b in pal:
+            out += bytes((r, g, b))
+    return bytes(out)
+
+
+def povsky_lump() -> bytes:
+    """Header of the sky (see pov_sky.c POV_SkyLoad): indices and the minute and star flag of each key."""
+    out = bytearray(b"POVS" + bytes([1, SKY_BANDS, len(theme_day.KEYS), BAND_DEG10]))
+    out += bytes([I_SKY["sun"], I_SKY["moon"], I_SKY["cloud"], I_SKY["shade"], I_SKY["star"], SKY_FIRST, 0, 0])
+    for minute, stars in theme_day.key_bytes():
+        out += struct.pack("<HBB", minute, stars, 0)
+    return bytes(out)
 
 
 def nearest(pal, rgb) -> int:
@@ -328,35 +345,20 @@ def plain_texture(idx: int) -> list[bytearray]:
 
 
 def sky_columns() -> list[list[int]]:
-    """Gradient rows plus a few flat shapes. Column c lies at angle c / 1024 of the full circle
-    (0 = east, 90 degrees = column 256); at the centre of the view a pixel is about one column."""
-    cols = [[SKY_FIRST + min(r, SKY_ROWS - 1) for r in range(SKY_HEIGHT)] for _ in range(SKY_COLS)]
-
-    def shape(cx, cy, radius, index, flat=0.0):
-        # a capsule: the segment of half length `flat` (in columns) widened by the radius
-        for c in range(SKY_COLS):
-            dc = min((c - cx) % SKY_COLS, (cx - c) % SKY_COLS)
-            for r in range(SKY_ROWS):
-                dx = max(0.0, dc - flat)
-                if dx * dx + (r - cy) ** 2 <= radius * radius:
-                    cols[c][r] = index
-
-    shape(256, 44, 28, I_SHAPES[0])                 # the big pale disc, north (90 degrees)
-    shape(150, 20, 5, I_SHAPES[1], flat=60)         # flat cloud capsules
-    shape(372, 14, 4, I_SHAPES[1], flat=44)
-    shape(60, 33, 4, I_SHAPES[1], flat=70)
-    shape(690, 26, 5, I_SHAPES[1], flat=64)
-    shape(930, 18, 4, I_SHAPES[1], flat=50)
-    return cols
+    """The texture SKY1 the map names; the engine's sky (POVSKY) does not use it, but it must exist."""
+    return [[SKY_FIRST] * 128 for _ in range(256)]
 
 
 def theme_lump() -> bytes:
     cls = list(range(256))
     rank = [3] * 256
     for i in range(SKY_FIRST, 256):
-        cls[i], rank[i] = 0, 0           # all gradient rows are one surface: no lines in the sky
-    for i in I_SHAPES:
-        rank[i] = 0
+        cls[i], rank[i] = 0, 0           # all sky bands are one surface: no lines in the sky
+    cls[I_SKY["star"]] = 0               # a star is a speck of the sky, no outline
+    # sun and moon: class 5 (the sky, class 0, takes the line: it lies outside the disc); a cloud is class 6,
+    # so against the sun the sun's pixel takes the line and a cloud keeps its whole area
+    for key, c in (("sun", 5), ("moon", 5), ("cloud", 6), ("shade", 6)):
+        cls[I_SKY[key]], rank[I_SKY[key]] = c, 0
     for i in (I_GROUND, I_GROUND_SHADE, I_GROUND_LIGHT):    # the ground's stages are one surface
         cls[i], rank[i] = I_GROUND, 1
     rank[I_BORDER] = 2
@@ -403,10 +405,13 @@ def split_patches(rows: list[bytearray]) -> list[bytes]:
 def build_theme(name: str) -> list[tuple[str, bytes]]:
     theme = THEMES[name]
     pal = build_palette(theme)
+    pals = theme_day.key_palettes(theme, build_palette)
     lumps: list[tuple[str, bytes]] = [
         ("POVTHEME", theme_lump()),
         ("POVX", povx_lump()),
-        ("PLAYPAL", playpal(pal)),
+        ("POVSKY", povsky_lump()),
+        ("POVCLD", sky_art.cloud_layer()),
+        ("PLAYPAL", playpal(pals)),
         ("COLORMAP", colormap(pal)),
     ]
     surf = surfaces()
@@ -415,7 +420,7 @@ def build_theme(name: str) -> list[tuple[str, bytes]]:
                   "PEX": plain_texture(I_GROUND_SHADE), "PEY": plain_texture(I_GROUND_SHADE)})
     pnames = ["PQSKY"]
     lumps.append(("PQSKY", column_patch(sky_columns())))
-    defs = [("SKY1", SKY_COLS, SKY_HEIGHT, [0])]
+    defs = [("SKY1", 256, 128, [0])]
     for i, (tex, rows) in enumerate(faces.items()):
         two = []
         for half, data in enumerate(split_patches(rows)):

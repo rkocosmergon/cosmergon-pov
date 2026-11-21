@@ -50,6 +50,10 @@ $(OBJDIR)/pov_control.o: pov_control.c
 	@echo [Compiling $<]
 	$(VB)$(CC) $(CFLAGS) -Wall -Wextra -c $< -o $@
 
+$(OBJDIR)/pov_sky.o: pov_sky.c
+	@echo [Compiling $<]
+	$(VB)$(CC) $(CFLAGS) -Wall -Wextra -c $< -o $@
+
 $(OBJDIR)/%.o: %.c
 	@echo [Compiling $<]
 	$(VB)$(CC) $(CFLAGS) -c $< -o $@

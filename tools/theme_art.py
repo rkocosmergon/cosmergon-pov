@@ -39,7 +39,8 @@ FACE_KEYS = ("t0", "t1", "x0", "x1", "y0", "y1")      # top (surface, fleck), si
 I_ROLE = {role: {key: 8 + 6 * r + i for i, key in enumerate(FACE_KEYS)} for r, role in enumerate(ROLES)}
 I_BAND = {"x": 32, "y": 33}
 TWIN_FIRST = 40
-I_SHAPES = (5, 6)           # sky shapes: disc, cloud
+I_SHAPES = (5, 6)           # sky shapes: sun disc, cloud
+I_SKY = {"sun": 5, "cloud": 6, "shade": 7, "star": 34, "moon": 35}     # the sky's own indices (POVSKY)
 SKY_FIRST = 156
 
 # every index that can carry a line, with the orientation of its surface (decides when its lines fold)

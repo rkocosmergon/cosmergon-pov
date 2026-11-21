@@ -70,14 +70,29 @@ static const struct
     { "own",   "A-CAMO2",  "GRASS2",   POV_H_CELL,  "POX", "POY" },   // a cell of the viewer's own
 };
 
-// Things: the sprite of each kind (frame A, the 8 rotations show the facing).
+// Things: the sprite and frame of each kind, and how high its origin floats above the floor of its cell
+// (units). A sprite with 8 rotations shows the facing; one with a single look (rotation 0: BPAK, the
+// TROO death frame) does not turn. The sprites are the IWAD's and stand in until the game's own figures
+// exist; the lumps used are checked by tests/test_kinds.py.
+//   marauder  TROO A  the imp, 48 x 60 units (body radius 0.6 m)
+//   monster   BOSS A  the baron, 49 x 69, horned and broad (radius 0.9 m, the largest body)
+//   bird      HEAD A  the cacodemon, a round flier 63 x 66; it floats: origin 40 above the floor, so its
+//                     lowest point (5 under the origin) is 35 clear of the ground, about the eye (41), and
+//                     its top (61 over the origin) is 101, under the 128 of a cell
+//   corpse    TROO M  the last frame of the death (12): lies on the floor, one look from every side
+//   loot      BPAK A  a backpack
 static const struct
 {
     const char *name;
     spritenum_t sprite;
+    int         frame;
+    int         lift;
 } s_thing_kind[] = {
-    { "marauder", SPR_TROO },
-    { "loot",     SPR_BPAK },
+    { "marauder", SPR_TROO, 0,  0 },
+    { "loot",     SPR_BPAK, 0,  0 },
+    { "monster",  SPR_BOSS, 0,  0 },
+    { "bird",     SPR_HEAD, 0, 40 },
+    { "corpse",   SPR_TROO, 12, 0 },
 };
 #define THING_KINDS ((int)(sizeof(s_thing_kind) / sizeof(s_thing_kind[0])))
 
@@ -139,6 +154,7 @@ typedef struct
 {
     int    used;
     int    linked;
+    int    kind;                        // index in s_thing_kind
     mobj_t mo;
 } pov_thing_t;
 
@@ -627,8 +643,9 @@ static void thing_place(int id, int kind, fixed_t x, fixed_t y, angle_t angle)
     t->mo.x = x;
     t->mo.y = y;
     t->mo.angle = angle;
+    t->kind = kind;
     t->mo.sprite = s_thing_kind[kind].sprite;
-    t->mo.frame = 0;
+    t->mo.frame = s_thing_kind[kind].frame;
     t->mo.flags = MF_NOBLOCKMAP;     // only the sector list: the renderer finds it there
     P_SetThingPosition(&t->mo);
     t->linked = 1;
@@ -661,7 +678,7 @@ static void commit(void)
 
         if (t->used)
         {
-            t->mo.z = t->mo.subsector->sector->floorheight;
+            t->mo.z = t->mo.subsector->sector->floorheight + s_thing_kind[t->kind].lift * FRACUNIT;
         }
     }
     p->mo->z = p->mo->subsector->sector->floorheight;

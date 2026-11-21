@@ -20,13 +20,19 @@ include pov_sources.mk
 SRC_DOOM = $(POV_CORE) doomgeneric_pov.o
 OBJS += $(addprefix $(OBJDIR)/, $(SRC_DOOM))
 
-all: $(OUTPUT)
+all: $(OUTPUT) capabilities
 
 -include $(OBJS:.o=.d)
 
 clean:
 	rm -rf $(OBJDIR)
-	rm -f $(OUTPUT)
+	rm -f $(OUTPUT) capabilities
+
+# The words of the control lines this build accepts, next to the program: a bridge sends a newer line only
+# when its word is listed (COSMERGON.md, "Capabilities"). tests/test_kinds.py holds the file and the code together.
+capabilities: pov_capabilities.txt
+	@echo [Writing $@]
+	$(VB)cp pov_capabilities.txt $@
 
 $(OUTPUT): $(OBJS)
 	@echo [Linking $@]

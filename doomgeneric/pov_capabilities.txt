@@ -1,0 +1,6 @@
+own
+origin
+daytime
+clouds
+world
+kinds

@@ -137,7 +137,7 @@ corner; angles in degrees, 0 = east, counter-clockwise.
 |---|---|---|
 | `cell <x> <y> <kind>` | kind of one cell: `empty`, `cell`, `wall`, `tower` | x, y integers 0..47 |
 | `row <y> <48 characters>` | a whole row, west to east: `.` empty, `#` cell, `=` wall, `T` tower | exactly 48 characters |
-| `thing <id> <kind> <x> <y> <angle>` | places or moves a thing: `marauder`, `loot` | id 0..255; 0 <= x, y < 48; angle within +-1,000,000 |
+| `thing <id> <kind> <x> <y> <angle>` | places or moves a thing: `marauder`, `loot`, and with the capability `kinds` `monster`, `bird`, `corpse` ("Thing kinds") | id 0..255; 0 <= x, y < 48; angle within +-1,000,000 |
 | `gone <id>` | removes a thing (unknown id: nothing happens) | id 0..255 |
 | `cam <x> <y> <angle>` | camera; the eye is 41 units above the floor of the cell it stands in | as `thing` |
 | `light <level>` | light level of all sectors | 0..255 |
@@ -183,6 +183,43 @@ writes every 64th frame.
     python3 -m unittest tests.test_control
     make -C doomgeneric -f Makefile.headless SANITIZE=1
     POV_SANITIZED=1 POV_BIN=$PWD/doomgeneric/cosmergon-pov-headless-sanitize python3 -m unittest tests.test_control
+
+### Thing kinds
+
+A thing is placed by `thing <id> <kind> <x> <y> <angle>`; a new line with the same id moves it and may change its kind
+(no `gone` needed: sprite, frame and height are taken anew). The sprites are Freedoom's and stand in until the game's own
+figures exist (table `s_thing_kind`: name, sprite, frame, lift).
+
+| Kind | Sprite | Body | Height |
+|---|---|---|---|
+| `marauder` | `TROO` A (8 rotations, shows the facing) | radius 0.6 m | on the floor |
+| `loot` | `BPAK` A | | on the floor |
+| `monster` | `BOSS` A (8 rotations) | radius 0.9 m, the largest | on the floor |
+| `bird` | `HEAD` A (8 rotations) | radius 0.8 m | floats: origin 40 units over the floor, lowest point 35 and top 101 units over it (under the 128 of a cell) |
+| `corpse` | `TROO` M (frame 12, the last of the death), one look | lies | on the floor, does not turn: the angle (always 0 from the bridge) changes nothing |
+
+Every thing's z follows the floor of its cell in every drawn frame (`commit()`), a floating one adds its lift, so a bird over
+a rising or sinking cell rises and sinks with it. An unknown kind is rejected as before; ids 0..255 and the limit of things
+are unchanged.
+
+## Capabilities
+
+The file `capabilities` next to the program (built by `make -f Makefile.headless` or `-f Makefile.pov` from
+`doomgeneric/pov_capabilities.txt`, one word a line) lists the control lines newer than the first set that this build accepts:
+
+| Word | Lines |
+|---|---|
+| `own` | kind `own`, row character `O` |
+| `origin` | `origin <x> <y>` |
+| `daytime` | `daytime <minutes>` |
+| `clouds` | `clouds <seconds>` |
+| `world` | `world`, `cube`, `nocube` |
+| `kinds` | the thing kinds `monster`, `bird`, `corpse` |
+
+**A bridge sends the lines of a word only when the word is in that file** (a missing file: none of them). An older program
+rejects such a line as a whole (counted, harmless), but the picture would lack what the line means. `tests/test_kinds.py` holds
+file and code together: each word has a probe (its lines are accepted, `rejected=0`), and a word without a probe or a probe
+without a word fails the test. A new line type gets its word, its probe and its row here in the same change.
 
 ## The window (package P4)
 
@@ -292,7 +329,7 @@ dimming with distance, flat wall textures per kind and direction, floors, a sky,
     `pov_tex_dshift`. Without a theme, or with a theme without `POVX`, nothing changes (hashes of the pictures of
     `81fb3a0` are a test).
 - Kind `own` (row character `O`): a cell of the viewer's own, same height as `cell`.
-- Sprites (things) are still the IWAD's and are wrong in a theme's palette: samples show no things.
+- Sprites (things) are still the IWAD's and are wrong in a theme's palette (noisy colours, the silhouette and the outline stay readable; `tools/kinds_samples.py` draws them in the themes).
 - Upstream fixes needed by a theme (marked `// cosmergon-pov:`): `p_spec.c` (an animated flat that the
   theme's flat range does not hold made `flattranslation[]` writes land in the zone and corrupt lumps),
   `p_switch.c` (switch textures missing from a theme are skipped).

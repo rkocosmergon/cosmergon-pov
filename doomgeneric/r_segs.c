@@ -164,7 +164,7 @@ R_RenderMaskedSegRange
 		if (index >=  MAXLIGHTSCALE )
 		    index = MAXLIGHTSCALE-1;
 
-		dc_colormap = walllights[index];
+		dc_colormap = walllights[index] + R_FogRow(spryscale);
 	    }
 			
 	    sprtopscreen = centeryfrac - FixedMul(dc_texturemid, spryscale);
@@ -268,7 +268,7 @@ void R_RenderSegLoop (void)
 	    if (index >=  MAXLIGHTSCALE )
 		index = MAXLIGHTSCALE-1;
 
-	    dc_colormap = walllights[index];
+	    dc_colormap = walllights[index] + R_FogRow(rw_scale);
 	    dc_x = rw_x;
 	    dc_iscale = (0xffffffffu / (unsigned)rw_scale) * (unsigned)dmul;
 	}

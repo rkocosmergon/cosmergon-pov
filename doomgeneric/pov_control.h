@@ -19,6 +19,10 @@
 #define POVC_MAX_NEXT   1000000     // frames per `next`
 #define POVC_MAX_ORIGIN 1000000     // `origin`: world coordinate of cell 0, 0, within +-this
 #define POVC_MAX_CLOUDS 10000000    // `clouds`: seconds on the cloud clock
+#define POVC_MAX_CUBES  64          // `cube` ids 0..63
+#define POVC_MAX_CUBE_POS 10000     // grid position of a cube within +-this
+#define POVC_DIM_MIN    8           // cells a side of a cube
+#define POVC_DIM_MAX    1024
 #define POVC_MAX_MSGS   20          // rejection messages on stderr
 
 // True when the command line has -pov-control. Everything below is inert without it.

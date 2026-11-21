@@ -43,6 +43,39 @@ I_SHAPES = (5, 6)           # sky shapes: sun disc, cloud
 I_SKY = {"sun": 5, "cloud": 6, "shade": 7, "star": 34, "moon": 35}     # the sky's own indices (POVSKY)
 SKY_FIRST = 156
 
+# ---- haze ("Luftperspektive"): flat steps towards the colour of the horizon, indices from 172 on.
+# The field: groups of surface indices (a surface and its fleck stage share one hazed index), three steps by
+# distance (the COLORMAP rows row_s - 1, row_s, row_s + 1: 640, 1280 and 3000 units, see make_theme.colormap).
+FOG_LEVELS = 3
+FOG_GROUPS: list[tuple[str, list[int], str]] = [("ground", [I_GROUND, I_GROUND_SHADE, I_GROUND_LIGHT], "floor"),
+                                                ("border", [I_BORDER], "border")]
+for _role in ROLES:
+    FOG_GROUPS += [(_role + "-t", [I_ROLE[_role]["t0"], I_ROLE[_role]["t1"]], "floor"),
+                   (_role + "-x", [I_ROLE[_role]["x0"], I_ROLE[_role]["x1"]], "x"),
+                   (_role + "-y", [I_ROLE[_role]["y0"], I_ROLE[_role]["y1"]], "y")]
+FOG_GROUPS += [("band-x", [I_BAND["x"]], "x"), ("band-y", [I_BAND["y"]], "y")]
+FOG_FIRST = 172
+
+
+def i_fog(group: int, level: int) -> int:
+    """The hazed index of a group of surface indices at a step 1..FOG_LEVELS."""
+    return FOG_FIRST + FOG_LEVELS * group + level - 1
+
+
+I_CLOUD_FOG = {lv: (FOG_FIRST + FOG_LEVELS * len(FOG_GROUPS) + 2 * (lv - 1), FOG_FIRST + FOG_LEVELS * len(FOG_GROUPS) + 2 * (lv - 1) + 1)
+               for lv in (1, 2, 3)}                                         # (fill, shade) of a cloud at steps 1..3
+I_NAVYF_FIRST = FOG_FIRST + FOG_LEVELS * len(FOG_GROUPS) + 6               # six hazed navies for lines of far things
+I_NAVYF = tuple(I_NAVYF_FIRST + i for i in range(6))
+I_CUBE_FIRST = I_NAVYF_FIRST + 6                                           # cubes: per step 0..3 five indices
+CUBE_TONES = ("xs", "xl", "ys", "yl", "b")                                 # side x, its line tone, side y, line tone, underside
+
+
+def i_cube(level: int, tone: str) -> int:
+    return I_CUBE_FIRST + 5 * level + CUBE_TONES.index(tone)
+
+
+assert i_cube(3, "b") < 256
+
 # every index that can carry a line, with the orientation of its surface (decides when its lines fold)
 BASES: list[tuple[int, str]] = [(I_GROUND, "floor"), (I_GROUND_SHADE, "floor"), (I_GROUND_LIGHT, "floor")]
 for _role in ROLES:

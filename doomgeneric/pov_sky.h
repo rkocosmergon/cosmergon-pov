@@ -15,12 +15,18 @@ int  POV_SkyMinute(void);
 // The 256 colours (768 bytes) of a minute of the day, interpolated between the key palettes.
 void POV_SkyPalette(int minute, unsigned char *out768);
 
-// Cloud clock in milliseconds: the base set by the `clouds` line plus the live drift.
+// World time of the clouds in milliseconds: the base set by the `clouds` line plus the live clock.
 void POV_SkySetCloudBase(double ms);
 void POV_SkySetCloudLive(double ms);
-// Whole picture points the clouds have moved at this picture width (the picture is redrawn only when this
-// changes).
-long POV_SkyDriftPoints(int view_w);
+// Where the field lies in the world: the grid position of its cube, the level of the field in the cube, the cube's
+// dimension in cells (`world` line); the world coordinates of the window's cell 0, 0 (`origin` line).
+void POV_SkySetWorld(int cx, int cy, int cz, int level, int dim);
+void POV_SkySetOrigin(int ox, int oy);
+// Neighbour cubes (`cube` / `nocube`), ids 0..63.
+void POV_SkyCube(int id, int cx, int cy, int cz, int dim);
+void POV_SkyNoCube(int id);
+// True when a cloud has moved a whole point since the picture drawn last (live mode draws only then).
+int POV_SkyDirty(void);
 
 // Once per picture, before the planes (needs viewangle and the view size).
 void POV_SkyBegin(void);

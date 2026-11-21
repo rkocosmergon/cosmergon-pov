@@ -71,7 +71,9 @@ extern int		loopcount;
 
 #define MAXLIGHTSCALE		48
 #define LIGHTSCALESHIFT		12
-#define MAXLIGHTZ	       128
+// cosmergon-pov: 256 (was 128): a theme's haze goes beyond the 2048 units upstream's table ends at. The levels
+// of the old entries are unchanged and the new ones equal the last old one (80 / (j + 1) is 0 from j = 80 on).
+#define MAXLIGHTZ	       256
 #define LIGHTZSHIFT		20
 
 // cosmergon-pov: index into scalelight for a scale (pixels per unit, 16.16) given as `shift`
@@ -83,6 +85,16 @@ extern int		viewwidth;		// r_draw.c
 static inline int R_LightIndex(fixed_t scale, int shift)
 {
     return (int)(((int64_t)scale * POV_REF_W / viewwidth) >> shift);
+}
+
+// cosmergon-pov: haze (lump POVFOG): beyond a distance the colormap row of a flat (pov_fog_j) or a wall
+// (pov_fog_scale, the scale normalised as above) is one further. 0 = off, the upstream light.
+extern int pov_fog_j;
+extern int pov_fog_scale;
+
+static inline int R_FogRow(fixed_t scale)
+{
+    return (pov_fog_scale && (int64_t)scale * POV_REF_W / viewwidth < pov_fog_scale) ? 256 : 0;
 }
 
 extern lighttable_t*	scalelight[LIGHTLEVELS][MAXLIGHTSCALE];

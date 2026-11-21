@@ -12,8 +12,8 @@ License: GPL-2.0 (see `LICENSE`, unchanged).
 - `scripts/download-freedoom.sh`: pinned, SHA-256 checked Freedoom download.
 - `tools/ppm2png.py`: PPM to PNG (standard library only).
 - `tools/theme_art.py`, `tools/make_theme.py`, `tools/theme_samples.py`: the themes and their samples ("Themes").
-- `doomgeneric/pov_sky.c`, `tools/sky_art.py`, `tools/theme_day.py`, `tests/test_sky.py`: the sky with the time of day and
-  drifting clouds ("The sky").
+- `doomgeneric/pov_sky.c`, `tools/sky_art.py`, `tools/theme_day.py`, `tools/sky_samples.py`, `tests/test_sky.py`,
+  `tests/test_world.py`: the sky as a place in the world: time of day, clouds with depth, neighbour cubes, haze ("The sky").
 - `tools/measure_ink.py`, `tools/measure_far.py`, `tests/test_ink.py`: stroke thickness, reach of the floor strokes and the
   calm of the far floor ("Themes").
 - `tests/test_headless.sh`: smoke test.
@@ -143,7 +143,8 @@ corner; angles in degrees, 0 = east, counter-clockwise.
 | `next [n]` | draw n frames (default 1) with the state reached so far | 1..1,000,000 |
 | `size <w> <h>` | picture size in points for the next frames, shown 1 : 1 (see "Picture size") | w integer 160..1280, h integer 100..800 |
 | `daytime <minutes>` | time of day in the sender's local time, minutes since midnight; only a theme with a sky reacts ("The sky"); default 720 (noon) | integer 0..1439 |
-| `clouds <seconds>` | the cloud clock: where the clouds are, seconds since their start position; only a theme with a sky reacts | integer 0..10,000,000 |
+| `clouds <seconds>` | the world time of the clouds; only a theme with a sky reacts | integer 0..10,000,000 |
+| `world <cube_x> <cube_y> <cube_z> <level> <dim>`, `cube <id> <cube_x> <cube_y> <cube_z> <dim>`, `nocube <id>` | where the field lies in the world and the neighbour cubes ("The sky") | see there |
 | `origin <x> <y>` | world coordinates of cell 0, 0 of the window (default 0 0); the look of a cell follows its world position (see "Themes"). The cell lines keep using window coordinates | x, y integers within +-1,000,000 |
 | `quit` | end | |
 
@@ -301,57 +302,116 @@ dimming with distance, flat wall textures per kind and direction, floors, a sky,
 
 ## The sky (package P7)
 
-A theme with the lumps `POVSKY` and `POVCLD` draws its own sky, point by point in the size of the picture
-(`pov_sky.c`, called from `R_DrawPlanes`, in place of the texture column). Without them (no theme, or an older
+A theme with the lumps `POVSKY`, `POVWLD`, `POVCLS`, `POVSTR` draws its own sky, point by point in the size of the
+picture (`pov_sky.c`, called from `R_DrawPlanes`, in place of the texture column). Without them (no theme, or an older
 theme) the sky is the IWAD's or the theme's texture as before; without a theme nothing changes (the hashes of
-`81fb3a0` and `a38a6b4` are a test).
+`81fb3a0`, `a38a6b4` and `7b88364` are a test).
 
-### Why not a bigger texture
-The old sky was a 1024 x 128 texture, 256 texels across the 90 degrees: at 1280 wide 5 points a texel across but
-3.2 down (and 1.6 : 1.0 at 672 x 324): the sun was an ellipse (measured, `a38a6b4`, bounding box of the sun's
-points: 119 x 83 at 672 x 324, 226 x 166 at 1280 x 640, 56 x 57 at 320 x 200, 226 x 228 at 1280 x 800) and its edge
-showed texel steps. A bigger texture would only move the ratio. Root: a point looks along `(u, v, 1)` with
-`u, v` in units of `f = width / 2`; azimuth is `viewangle + xtoviewangle[x]`, `tan(elevation) = v / sqrt(1 + u^2)`.
-Rows and columns step alike, so a disc is round at every shape, and nothing depends on a texture's resolution.
+### Why not a bigger texture, and why not an angle layer
+The first sky was a 1024 x 128 texture (the sun an ellipse: 119 x 83 points at 672 x 324, 226 x 166 at 1280 x 640 at
+`a38a6b4`). The second one painted clouds into a layer of (azimuth, tan elevation) and projected it flat: the flat
+base of a cloud leaned towards the edge of the picture and all clouds looked equally far ("they tip to the middle").
+Now every cloud is a body at a place in the world and the picture is a perspective of that world.
+A point of the picture looks along `(u, v, 1)` with `u, v` in units of `f = width / 2`; azimuth is
+`viewangle + xtoviewangle[x]`, `tan(elevation) = v / sqrt(1 + u^2)`. Rows and columns step alike: a disc is round at every
+shape, and nothing depends on a texture's resolution.
 
-### Layers (back to front)
-1. **Bands** of elevation, 16 flat colours of 3.0 degrees (`POVSKY`: palette index of band 0 at the horizon,
-   count, degrees): the calm stepped gradient. No outline between them (one class).
-2. **Stars** (night only, `stars` flag of the keys): bit 4 of the cloud layer, fixed to the world, 3 x 3 texels
-   (at least one point at 672 wide, where a point is 1.9 texels: 3 >= ceil(1.9)); colour index in the sky class
-   (no outline).
-3. **Sun** (06:00 to 19:00) or **moon** (19:00 to 06:00): a disc of angular radius 4.5 / 3.6 degrees, centre
-   `(cx - f tan(d), cy - f tan(el) / cos(d))` for the azimuth difference `d` to the view (hidden at 85 degrees or
-   more), radius `f tan(r)` points. The arc is simple, not astronomy: elevation `21 sin(pi p)` degrees (`p` the
-   share of the arc), azimuth 0 (east) at the rise through 270 (south) to 180 (west) at the set; the same arc for
-   the moon. 21 degrees because the picture has no pitch: its half angle is 25.7 degrees at 672 x 324 (26.6 at
-   1280 x 640, 32 at 1280 x 800), a higher body would never be seen. The sky is bound to the WORLD: the sun is in
-   one direction only. The moon is a crescent (the disc less a disc up and to the right).
-   The border wall of the window (512 units, 24 cells away from the middle) hides everything under about 8.7
-   degrees: the sun is above it only from about 07:45 to 17:15 and the moon from about 20:30 to 04:30 (computed from the
-   arc: the sun is hidden at 06:00, 18:30 and the moon at 20:00; the samples show sky colours there, not the body).
-4. **Clouds**: layer `POVCLD`, 4096 columns around the circle (angle >> 20) by 512 rows of `tan(elevation) * 651.9`
-   (a column of rows is walked with a fixed-point step per point, as a wall column), one byte a texel: 1 fill, 2
-   shade tone on the lower right edge, +16 star. Comic clouds (`tools/sky_art.py`: round bumps over a flat base, flatter
-   near the horizon, bigger higher up, in clusters and strays, 26 of them, same for every theme). Density: 651.9
-   texels a radian against `f` points a radian: 1.02 texels a point at the middle of 1280 wide (0.51 at 45
-   degrees off the middle, where the projection stretches: 2 points a texel), 1.94 at 672, 4.1 at 320.
-   The outline (1 point, 2 from 901 wide) is drawn by the outline pass on the finished picture, so the line has
-   the weight of every other line and no texel steps. Classes (`POVTHEME`): bands and stars 0, sun and moon 5, clouds
-   6: the pass puts the line on the lower class, outside a disc and outside a cloud, and where a cloud covers the sun
-   the line is on the sun's side. Nothing is doubled (looked at: a cloud across the sun at 672 and 1280 wide).
+### The world the field lies in
+A cell is a cube of 4 m (128 units, 32 units a metre). A field is one plane of a cube; a cube has N x N x N cells (the
+main world N = 128: 512 m a side, 128 fields). The cubes of a room stand at whole grid positions `(cube_x, cube_y, cube_z)`
+with a gap: one grid step is 2.5 cube widths (1.5 widths of air; 1280 m for N = 128). All cubes share ONE sky.
+
+New control lines (all checked like every line; without a theme with a sky they change nothing):
+
+| Line | Meaning | Limits |
+|---|---|---|
+| `world <cube_x> <cube_y> <cube_z> <level> <dim>` | where the field lies: the grid position of its cube, the level of the field in the cube, the cube's dimension in cells. Default `0 0 0 0 128` | positions integers within +-10,000; dim 8..1024; level 0..dim-1 |
+| `cube <id> <cube_x> <cube_y> <cube_z> <dim>` | a neighbour cube at its grid position (places or moves it) | id 0..63, as above |
+| `nocube <id>` | removes a neighbour cube (unknown id: nothing happens) | id 0..63 |
+| `clouds <seconds>` | the WORLD TIME of the clouds (they move with the wind in the world) | 0..10,000,000 |
+| `daytime <minutes>` | time of day, see below | 0..1439 |
+
+The camera's place in the world is `world` + `origin` + `cam`: `x = cube_x * step + (origin_x + cam_x) * 128`, same for y,
+`z = cube_z * step + level * 128 + eye height` (step = 2.5 * dim * 128 units; `origin` is the field coordinate of the
+window's cell 0, 0 in cells; the eye is `viewz`). Two programs with the same world time at other places see the same sky
+from their places (a test: cube (1,0,0) with `origin 0` is cube (0,0,0) with `origin 320`, 320 cells = one step: the sky
+above the border wall is identical, point for point). `cube` lines are one line each, so a change is atomic; a bridge
+sends the neighbours it knows once (up to 64) and `nocube` for those that go. The bridge sends `world` once and again when
+the field's level changes, `clouds` once at the start (the world time; live mode adds the engine clock).
+
+### Clouds (lumps `POVWLD`, `POVCLS`)
+Upright bodies turned to the viewer at world positions `(x, y, height of the base)` on a periodic tile of 16 km (the nearest
+image is taken, so the sky is the same everywhere); 220 clouds in four layers of base height 450, 650, 900 and 1250 m (+-50) above
+the lowest cube, 65 percent of them clustered (sigma 1.8 km) over the middle where the cubes stand, the rest all round; width
+250..650 m times 1.0 to 1.9 by layer, no two of a layer overlapping. The perspective is the planar one: size in points
+`f * width / depth` (depth = distance along the view), centre `cx + f * lateral / depth`, base row
+`cy - f * (height - eye height) / depth`. The lower edge is a row of the picture at every place and angle. A cloud is a
+picture (sprite) of 1024 x 320 texels with three smaller copies (512, 256, 128 wide, every second column and row), picked
+so that a texel is not smaller than a point; 8 shapes (5 with 6 to 9 bumps for the big ones, 3 with 3 or 4 for those under
+330 m wide: calm silhouettes for the small, far ones), flat fill, one shade tone on the lower right edge. A cloud nearer than its width
+would be wider than 1500 points (a texel of 1.5 points: no steps at 1280) is not drawn. The wind is the same for every
+cloud, 4 m/s to the east, in the WORLD: near clouds cross the picture faster than far ones (the parallax is the geometry).
+The outline is drawn by the outline pass (1 point, 2 from 901 wide); clouds and cubes are rank 0 (the line is on their
+own side, in the haze colour of their distance, see below), the sky rank 1.
+Depth: every sky point has a depth (a float row per column): a cloud and a cube are drawn in any order and the nearer
+wins, so clouds pass in front of a cube and disappear behind it; the sun, moon and stars are behind everything.
+Limit (not smoothed): a cloud closer than the width limit pops in and out. From the low levels this is out of the picture (the
+lowest layer is 400 m or more over the eye, over 40 degrees at 400 m); for an eye as high as the cloud layers (levels above
+about 100 look at the lowest layer from the side) a passing cloud can pop at the sides of the picture.
+
+### Neighbour cubes
+A box at its place (corner at `cube * step`, edge `dim * 128` units), drawn per column: the horizontal ray against the
+footprint gives the face it enters through (x: tone 1, y: tone 2) and its distance, the vertical extent follows from the
+heights `(z - eye) / distance`. Only what is above the horizon is drawn (the floor of the field is below it), so the top
+face is never seen, the underside is (a cube above the eye). Level lines: a power of two of horizontal lines on the face,
+as many as stay 12 points apart (a face at 1000 m on a 512 m cube: 16 levels at 1280 wide, 8 at 672; none when they would be closer than that),
+drawn as the darker tone of the same face (no extra outline). Perspective: a 512 m cube whose face is 1020 m away is 28
+degrees wide and (from level 0) reaches the top of the picture (26.6 degrees), a test compares edges and top with the corners (within 3 points at
+320, 672 and 1280 wide). The border wall of the window (512 units, 24 cells from the middle: about 8.7 degrees) hides the lower
+part; the higher the level, the less is left: from level 60 (240 m) a neighbour rises 14.9 degrees, so about 6 degrees over the wall;
+from level 115 (460 m) nothing shows over the wall. The samples show levels 5, 60 and 115.
+
+### Haze ("Luftperspektive", not fog)
+Style limit (less glow and fog, more surface): no soft volumes, no gradient, no blur. Flat
+steps towards the colour of the horizon, lines get lighter, near things stay as they are. The theme has one value, `fog`:
+0 off, 1 light (the default), 2 clear (the samples `dunst-*` show all three).
+- **The field** (ground, walls, tops, bands, the border wall): three steps by distance through the COLORMAP rows
+  `row_s - 1`, `row_s` and `row_s + 1` (`row_s` the start row of the surface's orientation): from 640, 1280 and 3000 units
+  (the strokes are folded before 640 units, so no stroke has a haze colour). Share towards the horizon colour: 0.12, 0.26, 0.42
+  times `fog` (at most 0.95). The rows beyond `row_s` are new: upstream's light tables end at 2048 units, so for a
+  theme `MAXLIGHTZ` is 256 and a flat beyond `POVFOG` distance (3000) and a wall whose normalised scale is below 160 * 65536 / 3000
+  take the next row (`pov_fog_j`, `R_FogRow`, `r_main.c`, `r_segs.c`); the entries that existed keep their level (80 / (j + 1)
+  is 0 from j = 80 on), so without a theme the pictures are byte for byte the old ones. A surface and its fleck stage share one
+  hazed index (a face's second tone is gone far away, like the ground tints), 16 groups x 3 steps = 48 palette indices
+  (`theme_art.FOG_GROUPS`). The border wall (one texture for four sides, so no orientation) is always at the last step, the
+  far horizon.
+- **Lines** (`POVFOG`: per colour index the index of a line drawn on it): a line on a hazed point is a hazed navy (six
+  steps, 0.15 .. 0.85), so lines get lighter, not thicker. The lines of clouds and cubes follow the haze of their distance.
+- **Clouds and cubes** by their distance in metres: clouds at 1800, 3200, 5000 (shares 0, 0.3, 0.5, 0.7), cubes at 1000, 2000,
+  3500 (0.45, 0.6, 0.72, 0.85: the nearest cube is already 1020 m away): they stand pale in the haze.
+- The haze colour is the sky's horizon colour of the time of day (it is part of each key palette).
+- **Contrast, derived** (`tests.test_world.Haze`): the roles of a step are the roles mixed with the same horizon colour by the
+  same share, so the difference of two is `(1 - share)` times the difference at step 0; the bound at each of the 11 key
+  palettes and each step is the day's weakest pair times the section's light factor times `(1 - share)`, less sqrt(3); for
+  `fog` 1 and 2 in all three themes.
+Palette budget: 172..251 of 256 (48 field, 6 clouds, 6 hazed navies, 20 cubes).
+
+### The sky's own layers (back to front)
+Bands (16 flat colours of 3 degrees), stars (240, fixed to the world, 1 to 2 points, only at night), the sun (06:00 to 19:00) or the
+moon (19:00 to 06:00, a crescent); then cubes and clouds with depth. Sun and moon: a disc of angular radius 4.5 / 3.6 degrees
+at `(cx - f tan(d), cy - f tan(el) / cos(d))`, radius `f tan(r)` points, round at every shape (320 x 200, 672 x 324, 1280 x 640,
+1280 x 800 are a test); the arc is simple, not astronomy: elevation `21 sin(pi p)` (higher is never in the picture: no pitch,
+a half angle of 25.7 degrees at 672 x 324), azimuth east at the rise through south to west at the set. The border wall hides
+everything under 8.7 degrees: the sun is over it from about 07:45 to 17:15, the moon from about 20:30 to 04:30.
 
 ### Clouds drift without load
-Rate: 0.25 degrees a second (one turn of the circle in 24 minutes; across the 90 degrees of the picture in 6
-minutes), "one notices it when looking": 0.70 points a second at 320 wide, 1.47 at 672, 2.79 at 1280. The clouds
-move in WHOLE POINTS (`POV_SkyDriftPoints = floor(columns * 2 pi f / 4096)`; the texture offset is the points
-turned back into columns, so the picture is a function of the points); live mode draws only when that number changed:
-**1.5 pictures a second at 672 wide, 2.8 at 1280 wide, 0.7 at 320** (measured live, 5 s: tests.test_sky.Live), at
-4 to 16 ms a picture (see Measured below): a few tenths of a percent of a core. The clock is deterministic:
-- blocking mode (headless, tests): the clouds stand where the last `clouds <seconds>` line put them (default 0);
-  the picture depends only on the input;
-- live mode: that base plus the engine's clock (`I_GetTimeMS`, a window: real time, the headless live mode: a tick
-  of `POV_LIVE_MS` virtual milliseconds).
+Wind 4 m/s: a cloud 1000 m away crosses 0.23 degrees a second, the nearest ones about three times that. The cloud time is
+the world time: blocking mode (headless, tests) the last `clouds` line (default 0), so a picture depends only on the input; live
+mode adds the engine clock. Live mode redraws when ANY visible cloud has moved a whole point on the picture since the last
+picture (`POV_SkyDirty`: one projection per cloud and tick, 220 a tick), so the nearest cloud sets the rate (the next layer
+sets it when the nearest has left). Measured (headless live, 10 s, default place, four directions): **0.4 to 0.8 pictures a
+second at 320 x 200, 0.7 to 1.1 at 672 x 324, 1.9 to 3.3 at 1280 x 800** (computed from the clouds and the geometry in
+`tests.test_sky.Live`).
 
 ### The time of day (the bridge's part)
 The program has no clock and no time zone knowledge. The sender (the SDK's bridge) sends **`daytime <minutes>`** with
@@ -385,32 +445,34 @@ of the weakest pair on the hour: 12.9 to 16.7 (A), 9.2 to 11.9 (B), 4.8 to 7.4 (
 blue-grey at night, 4.8; the theme C was weak in the day too, 7.2).
 
 ### Samples
-    python3 tools/theme_samples.py --sky      # out/muster-himmel/: A and B, 672x324 and 1280x640
+    python3 tools/theme_samples.py --sky      # out/muster-himmel/: A and B, 672x324 and 1280x640 (tools/sky_samples.py)
 
-`tageslauf-<A|B>-<size>.png` (06:00 08:00 12:00 16:00 18:30 20:00 23:00 03:00, the view towards the sun or moon,
-labelled), `rundblick-...` (four directions at 16:00), `wolkenzug-...` (five pictures 10 s apart), and every
-picture of the day alone (`einzel-...-<hhmm>.png`). The scene is a sparse field around the eye (24.5, 24.5).
-`theme_samples.berlin_minutes()` gives the Berlin minutes for a tool that wants "now" (the program does not).
+`tageslauf-<A|B>-<size>.png` (06:00 08:00 12:00 16:00 18:30 20:00 23:00 03:00, the view towards the sun or moon, eight
+neighbour cubes, labelled), `rundblick-...` (four directions at 16:00, none of the cubes to the south), `wolkenzug-...`
+(five pictures 10 s apart from a world time at which a cloud nearer than the east cube crosses it), `gang-...` (the camera
+goes 5 steps across the field, 40 m apart), `dunst-...` (`fog` 0, 1, 2), `ebenen-...` (levels 5, 60, 115), and every picture of
+the day alone (`einzel-...-<hhmm>.png`). The scene is a sparse field around the eye (24.5, 24.5), the window at cells 40..88 of
+the field (the middle of its cube), the cube at (0, 0, 0). `theme_samples.berlin_minutes()` gives the Berlin minutes.
 
-### Measured (`tools/measure_size.py`, as above; and an empty field with a wall, the camera turning, sky-heavy)
-ms a picture, 400 pictures, 3 runs, before (`a38a6b4`) / after:
+### Measured (`tools/measure_size.py` and a sky-heavy scene: an empty field with a wall, the camera turning)
+ms a picture, 400 pictures, 3 runs, before (`7b88364`) / after (the machine is noisy: +-0.2 ms between runs):
 
-| Size | Scene | Mean before | Mean after | Slowest before | Slowest after |
-|---|---|---|---|---|---|
-| 672 x 324 | wueste, the usual scene | 4.10 | 4.19 | 11.61 | 7.26 |
-| 1280 x 800 | wueste, the usual scene | 16.47 | 15.80 | 112.46 | 22.95 |
-| 672 x 324 | wueste, sky-heavy | 3.65 | 3.86 | 6.71 | 7.00 |
-| 1280 x 800 | wueste, sky-heavy | 14.68 | 15.19 | 18.87 | 25.39 |
+| Size | Scene | Before | After |
+|---|---|---|---|
+| 672 x 324 | wueste, the usual scene | 4.37 | 4.63 |
+| 1280 x 800 | wueste, the usual scene | 16.49 | 17.94 |
+| 672 x 324 | sky-heavy | 3.84 | 4.17 (with 8 cubes 4.59) |
+| 1280 x 800 | sky-heavy | 15.48 | 17.08 (with 8 cubes 18.66) |
 
-(the slowest values are single outliers of this machine and differ between runs; the means are the measure.) Without
-a theme nothing changed (0.54 / 1.12 / 4.38). Memory at 1280 x 800: 34.7 MB resident against 31.7 (the 2 MB cloud
-layer and the 11 palettes), the zone has 19.3 MB free of 24.
+Without a theme nothing changed (0.54 / 1.11 / 4.38). The clouds cost about +6 to +10 percent a picture, 8 neighbour cubes
+about +10 percent more. Memory at 1280 x 800: 34.1 MB resident against 32.4 MB; the sprite lump is 3.5 MB (a theme file 8.0 MB against 6.6),
+the zone has 17.95 MB free of 24 (19.34 before).
 
 ### Tests
-    python3 -m unittest tests.test_sky     # the lines, no theme = no change, the sun round in four shapes,
-                                           # drift only in sky points, every palette at 25 times of the day,
-                                           # contrast bound, step of a minute, live drift, outline
-(sanitizer: as above; the known upstream class of `r_plane.c` in `tests/test_control.py` moved with the lines.)
+    python3 -m unittest tests.test_sky tests.test_world
+`test_sky`: the time of day (lines, palettes, contrast), the sun round, live drift, outline. `test_world`: the lines, clouds
+against the perspective (size, place, lower edge a row in 3 shapes x 2 directions x 3 places, size by distance, parallax by a
+step and by the wind), one sky for all cubes, cubes against their corners, depth order, the haze in flat steps, the haze contrast.
 
 ## Picture size (package P5)
 

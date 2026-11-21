@@ -37,6 +37,8 @@ def setUpModule():
     for name in make_theme.THEMES:
         with open(os.path.join(WORK.name, name + ".wad"), "wb") as handle:
             handle.write(make_theme.wad_bytes(make_theme.build_theme(name)))
+    with open(os.path.join(WORK.name, "wueste-open.wad"), "wb") as handle:       # a sky without clouds
+        handle.write(make_theme.wad_bytes(make_theme.build_theme("wueste", clouds=[])))
 
 
 def tearDownModule():
@@ -123,19 +125,14 @@ class Line(unittest.TestCase):
 
 
 class Sun(unittest.TestCase):
-    def disc(self, minute, size, theme="wueste"):
-        """Frame with the sun fully visible (a cloud phase without a cloud over it), the sun's pixels."""
+    def disc(self, minute, size):
+        """The sun's pixels in a sky without clouds, and where the arc puts it."""
         w, h = map(int, size.split("x"))
         cx, cy, r = sky_art.project(minute, sky_art.view_towards(minute), w, h)
-        want = math.pi * r * r
-        sun = tuple(make_theme.hexrgb(make_theme.THEMES[theme]["disc"]))
-        for seconds in range(0, 12000, 600):
-            rc, err, frames = sun_scene(minute, size, seconds, theme)
-            self.assertEqual(rc, 0, err)
-            pts = [(i % w, i // w) for i, p in enumerate(pixels(frames[0][2])) if p == sun]
-            if abs(len(pts) - want) < 0.01 * want:
-                return pts, (cx, cy, r)
-        self.fail("no cloud phase leaves the sun free at " + size)
+        sun = tuple(make_theme.hexrgb(make_theme.THEMES["wueste"]["disc"]))
+        rc, err, frames = sun_scene(minute, size, 0, "wueste-open")
+        self.assertEqual(rc, 0, err)
+        return [(i % w, i // w) for i, p in enumerate(pixels(frames[0][2])) if p == sun], (cx, cy, r)
 
     def test_the_sun_is_round_in_four_shapes(self):
         for size in ("320x200", "672x324", "1280x640", "1280x800"):
@@ -149,34 +146,18 @@ class Sun(unittest.TestCase):
             self.assertLess(abs(sum(ys) / len(ys) + 0.5 - cy), 1.0, size)
 
 
-class Clouds(unittest.TestCase):
-    def test_drift_changes_only_sky_points(self):
-        for theme in ("wueste", "gelbestadt"):
-            pal = make_theme.build_palette(make_theme.THEMES[theme])
-            sky = {pal[i] for i in (*range(make_theme.SKY_FIRST, make_theme.SKY_FIRST + make_theme.SKY_BANDS),
-                                    *make_theme.I_SKY.values())} | {make_theme.NAVY}
-            field = "".join("cell %d %d wall\n" % (x, 30) for x in range(14, 34))
-            frames = []
-            for seconds in (0, 40):
-                data = field + "daytime 720\nclouds %d\ncam %s 90\nnext\nquit\n" % (seconds, EYE)
-                rc, err, fr = render(data, theme, "672x324")
-                self.assertEqual(rc, 0, err)
-                frames.append(pixels(fr[0][2]))
-            diff = [(a, b) for a, b in zip(*frames) if a != b]
-            self.assertGreater(len(diff), 300)
-            self.assertTrue(all(a in sky and b in sky for a, b in diff))
-
-    def test_clouds_move_by_whole_points(self):
-        # 10 s = 2.5 degrees = 14.7 points at 672 wide: the drift is the floor of that
-        self.assertEqual(sky_art.drift_points(10, 672), 14)
-        self.assertEqual(sky_art.drift_points(0.5, 672), 0)
-        self.assertEqual(sky_art.drift_points(10, 1280), 27)
-
-
 class Live(unittest.TestCase):
-    def test_drifting_clouds_draw_only_when_they_moved_a_point(self):
-        # live mode, a tick every 20 ms (virtual clock too): in 5 s the clouds move 1.25 degrees = 7.3 points at
-        # 672 wide; one picture at the start and one per point, not one per tick (250 ticks)
+    def test_drifting_clouds_draw_only_when_one_moved_a_point(self):
+        # live mode, a tick every 20 ms (virtual clock too), 5 s, 672 wide, looking east: a picture is due when
+        # ANY cloud has moved a whole point since the last one. The rate follows the cloud that moves fastest over the
+        # picture (the nearest), computed from the same clouds (sky_art.cloud_screen): about that many pictures,
+        # and not one a tick (250 of them).
+        eye = sky_art.eye((0, 0, 0), 0, 128, 24.5 * 128, 24.5 * 128, 41)
+        rate = 0.0
+        for cl in sky_art.cloud_list():
+            a, b = (sky_art.cloud_screen(cl, t, eye, 0.0, 672, 324) for t in (0.0, 1.0))
+            if a and b and -60 < a[0] < 732 and a[3] > 0 and a[1] > 0 and a[1] - a[3] < 162:
+                rate = max(rate, abs(b[0] - a[0]))
         with tempfile.TemporaryDirectory() as out:
             proc = subprocess.Popen(tc.command(MAP) + ["-warp", "1", "1", "-pov-theme", os.path.join(WORK.name, "wueste.wad"),
                                                        "-pov-size", "672x324"],
@@ -188,8 +169,10 @@ class Live(unittest.TestCase):
             proc.stderr.close()
             self.assertEqual(proc.wait(timeout=30), 0, err)
             frames = len([n for n in os.listdir(out) if n.endswith(".ppm")])
-        self.assertGreaterEqual(frames, 5)
-        self.assertLessEqual(frames, 12)
+        self.assertGreater(rate, 0.3)
+        self.assertGreaterEqual(frames, 1 + 0.5 * 5 * rate)
+        self.assertLessEqual(frames, 2 + 1.3 * 5 * rate)
+        self.assertLess(frames, 100)
 
 
 class Palette(unittest.TestCase):

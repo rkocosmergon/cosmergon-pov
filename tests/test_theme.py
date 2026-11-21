@@ -55,6 +55,17 @@ def render(data, theme=None):
     return proc.returncode, err, frames
 
 
+def bare(index):
+    """The surface index behind a hazed one (the first of its group); any other index is itself."""
+    for g, (_name, members, _orient) in enumerate(art.FOG_GROUPS):
+        if art.i_fog(g, 1) <= index <= art.i_fog(g, art.FOG_LEVELS):
+            return members[0]
+    for _g, (_name, members, _orient) in enumerate(art.FOG_GROUPS):
+        if index in members:
+            return members[0]
+    return index
+
+
 def colours(frame):
     body = frame[tc.HEADER:]
     return {tuple(body[i:i + 3]) for i in range(0, len(body), 3)}
@@ -82,13 +93,13 @@ class Generator(unittest.TestCase):
                 for i in range(256):
                     if i in art.TWIN_SET or i in art.SURFACE_OF_SMALL or i in art.SMALL_TWIN.values() or i in tints:
                         continue
-                    self.assertEqual(cm[row * 256 + i], i, (name, row, i))
+                    self.assertEqual(bare(cm[row * 256 + i]), bare(i), (name, row, i))      # the haze is the only change
 
     def test_the_tints_of_the_ground_fold_away_far_out(self):
         cm = make_theme.colormap(make_theme.build_palette(make_theme.THEMES["wueste"]))
         for tint in (art.I_GROUND_SHADE, art.I_GROUND_LIGHT):
             self.assertEqual(cm[tint], tint)                                  # near: a plate
-            self.assertEqual(cm[31 * 256 + tint], art.I_GROUND)               # far: the one calm ground
+            self.assertEqual(bare(cm[31 * 256 + tint]), art.I_GROUND)         # far: the one calm ground
             rows = [r for r in range(32) if cm[r * 256 + tint] == tint]
             self.assertEqual(rows, list(range(len(rows))))
             small = art.SMALL_OF[tint]
@@ -101,7 +112,7 @@ class Generator(unittest.TestCase):
         for base, (core, wide, fine) in art.TW.items():
             for twin in (core, wide, fine):
                 self.assertEqual(cm[twin], twin)                              # near: a line
-                self.assertEqual(cm[31 * 256 + twin], base)                   # far: the surface
+                self.assertEqual(bare(cm[31 * 256 + twin]), bare(base))           # far: the surface
                 self.assertEqual(pal[twin], make_theme.NAVY)
             rows = {k: [r for r in range(32) if cm[r * 256 + t] == t] for k, t in (("core", core), ("wide", wide), ("fine", fine))}
             for k, r in rows.items():
@@ -117,15 +128,15 @@ class Generator(unittest.TestCase):
             fleck = art.FLECK_OF_SMALL[small]
             self.assertEqual(pal[small], pal[fleck])                 # the colour of the fleck
             self.assertEqual(cm[small], small)                       # near: the fleck
-            self.assertEqual(cm[31 * 256 + small], surface)          # far: the surface
+            self.assertEqual(bare(cm[31 * 256 + small]), bare(surface))   # far: the surface
             twin = art.SMALL_TWIN[small]
             self.assertEqual(cm[twin], twin)                         # its line, near
-            self.assertEqual(cm[31 * 256 + twin], surface)
+            self.assertEqual(bare(cm[31 * 256 + twin]), bare(surface))
             self.assertEqual(pal[twin], make_theme.NAVY)
             # the line never shows the fleck's colour after the fleck is gone
             for row in range(32):
-                if cm[row * 256 + small] == surface:
-                    self.assertEqual(cm[row * 256 + twin], surface)
+                if bare(cm[row * 256 + small]) == bare(surface):
+                    self.assertEqual(bare(cm[row * 256 + twin]), bare(surface))
 
     def test_the_tower_has_a_strong_colour_of_its_own(self):
         # a tower is no longer the palest thing in the picture: saturated, and far from every other role
@@ -236,8 +247,9 @@ class Engine(unittest.TestCase):
             self.assertIn("rejected=0", err)
 
     def test_no_dimming_with_distance(self):
-        # the same wall colour at 2 and at 8 cells (one wall kind, one direction): no darkening
-        rc, err, frames = render("cell 24 30 wall\ncell 24 44 wall\ncam 24.5 22.5 90\nnext\n", "gelbestadt")
+        # the same wall colour at 2.5 and at 4.5 cells (one wall kind, one direction): no darkening; the haze
+        # starts at 640 units (5 cells), tests.test_sky.Haze looks at it
+        rc, err, frames = render("cell 24 25 wall\ncell 24 27 wall\ncam 24.5 22.5 90\nnext\n", "gelbestadt")
         self.assertEqual(rc, 0, err)
         wall = make_theme.hexrgb(make_theme.THEMES["gelbestadt"]["wall"])
         dark = make_theme.shade(wall)

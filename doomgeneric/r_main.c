@@ -106,6 +106,8 @@ fixed_t			pov_minz;
 lighttable_t*		scalelight[LIGHTLEVELS][MAXLIGHTSCALE];
 lighttable_t*		scalelightfixed[MAXLIGHTSCALE];
 lighttable_t*		zlight[LIGHTLEVELS][MAXLIGHTZ];
+int			pov_fog_j = 0;
+int			pov_fog_scale = 0;
 
 // bumped light from gun blasts
 int			extralight;			
@@ -638,6 +640,10 @@ void R_InitLightTables (void)
 
 	    if (level >= NUMCOLORMAPS)
 		level = NUMCOLORMAPS-1;
+
+	    // cosmergon-pov: haze, one row further beyond the distance of pov_fog_j
+	    if (pov_fog_j && j >= pov_fog_j && level < NUMCOLORMAPS-1)
+		level++;
 
 	    zlight[i][j] = colormaps + level*256;
 	}

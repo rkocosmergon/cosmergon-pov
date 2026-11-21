@@ -91,7 +91,6 @@ static int s_quit = 0;
 static int s_input_done = 0;             // end of input reached, no line left
 static int s_dirty = 0;                  // changed since the last drawn frame
 static int s_live_t0 = 0;                // I_GetTimeMS at the start (the clouds' live clock)
-static long s_drift_drawn = 0;           // cloud drift in points of the last drawn picture
 static unsigned long s_pending = 0;      // frames still to draw for `next`
 static unsigned long s_lines = 0;
 static unsigned long s_rejected = 0;
@@ -414,13 +413,14 @@ static void commit(void)
 // ---------------------------------------------------------------------------------------
 // Parser: one line -> one validated command. Nothing is applied before the whole line is valid.
 // ---------------------------------------------------------------------------------------
-typedef enum { OP_CELL, OP_ROW, OP_THING, OP_GONE, OP_CAM, OP_LIGHT, OP_NEXT, OP_SIZE, OP_ORIGIN, OP_DAYTIME, OP_CLOUDS, OP_QUIT } op_t;
+typedef enum { OP_CELL, OP_ROW, OP_THING, OP_GONE, OP_CAM, OP_LIGHT, OP_NEXT, OP_SIZE, OP_ORIGIN, OP_DAYTIME, OP_CLOUDS, OP_WORLD, OP_CUBE, OP_NOCUBE, OP_QUIT } op_t;
 
 typedef struct
 {
     op_t   op;
     int    a, b;                       // cell x/y, row y, id, light, next n
     int    kind;
+    int    w[4];                       // world: cube x, y, z, level; cube: x, y, z, dim
     double x, y, angle;
     unsigned char row[POVC_GRID];
 } command_t;
@@ -542,6 +542,58 @@ static int kind_from_char(char c)
     case 'O': return K_OWN;
     default: return -1;
     }
+}
+
+// `world <cube_x> <cube_y> <cube_z> <level> <dim>`: where the field lies in the world (COSMERGON.md, "The sky").
+static const char *parse_world(char **tok, int ntok, command_t *c)
+{
+    int i;
+
+    if (ntok != 6)
+    {
+        return "world needs <cube_x> <cube_y> <cube_z> <level> <dim>";
+    }
+    c->op = OP_WORLD;
+    for (i = 0; i < 3; i++)
+    {
+        if (!parse_int(tok[1 + i], -POVC_MAX_CUBE_POS, POVC_MAX_CUBE_POS, &c->w[i]))
+        {
+            return "a cube position must be an integer within +-10,000";
+        }
+    }
+    if (!parse_int(tok[5], POVC_DIM_MIN, POVC_DIM_MAX, &c->b))
+    {
+        return "dim must be an integer 8..1024 (cells a side of the cube)";
+    }
+    if (!parse_int(tok[4], 0, c->b - 1, &c->w[3]))
+    {
+        return "level must be an integer 0..dim-1";
+    }
+    return NULL;
+}
+
+// `cube <id> <cube_x> <cube_y> <cube_z> <dim>`: a neighbour cube at its grid position.
+static const char *parse_cube(char **tok, int ntok, command_t *c)
+{
+    int i;
+
+    if (ntok != 6)
+    {
+        return "cube needs <id> <cube_x> <cube_y> <cube_z> <dim>";
+    }
+    c->op = OP_CUBE;
+    if (!parse_int(tok[1], 0, POVC_MAX_CUBES - 1, &c->a))
+    {
+        return "id must be an integer 0..63";
+    }
+    for (i = 0; i < 3; i++)
+    {
+        if (!parse_int(tok[2 + i], -POVC_MAX_CUBE_POS, POVC_MAX_CUBE_POS, &c->w[i]))
+        {
+            return "a cube position must be an integer within +-10,000";
+        }
+    }
+    return parse_int(tok[5], POVC_DIM_MIN, POVC_DIM_MAX, &c->w[3]) ? NULL : "dim must be an integer 8..1024";
 }
 
 // Returns NULL when the line is a valid command (stored in *c) or the reason it is not.
@@ -765,6 +817,23 @@ static const char *parse_line(const unsigned char *line, size_t len, command_t *
         c->op = OP_DAYTIME;
         return parse_int(tok[1], 0, 1439, &c->a) ? NULL : "daytime must be an integer 0..1439 (minutes since midnight)";
     }
+    if (strcmp(tok[0], "world") == 0)
+    {
+        return parse_world(tok, ntok, c);
+    }
+    if (strcmp(tok[0], "cube") == 0)
+    {
+        return parse_cube(tok, ntok, c);
+    }
+    if (strcmp(tok[0], "nocube") == 0)
+    {
+        if (ntok != 2)
+        {
+            return "nocube needs <id>";
+        }
+        c->op = OP_NOCUBE;
+        return parse_int(tok[1], 0, POVC_MAX_CUBES - 1, &c->a) ? NULL : "id must be an integer 0..63";
+    }
     if (strcmp(tok[0], "clouds") == 0)
     {
         if (ntok != 2)
@@ -840,6 +909,11 @@ static void apply(const command_t *c)
     case OP_ORIGIN:
         s_origin_x = c->a;
         s_origin_y = c->b;
+        if (POV_SkyActive())
+        {
+            POV_SkySetOrigin(c->a, c->b);
+            s_dirty = 1;
+        }
         for (i = 0; i < POVC_CELLS; i++)
         {
             set_kind(i, s_kind_of[i]);      // the variants follow the world position
@@ -857,6 +931,27 @@ static void apply(const command_t *c)
         if (POV_SkyActive())
         {
             POV_SkySetCloudBase(c->a * 1000.0);
+            s_dirty = 1;
+        }
+        break;
+    case OP_WORLD:
+        if (POV_SkyActive())
+        {
+            POV_SkySetWorld(c->w[0], c->w[1], c->w[2], c->w[3], c->b);
+            s_dirty = 1;
+        }
+        break;
+    case OP_CUBE:
+        if (POV_SkyActive())
+        {
+            POV_SkyCube(c->a, c->w[0], c->w[1], c->w[2], c->w[3]);
+            s_dirty = 1;
+        }
+        break;
+    case OP_NOCUBE:
+        if (POV_SkyActive())
+        {
+            POV_SkyNoCube(c->a);
             s_dirty = 1;
         }
         break;
@@ -993,6 +1088,8 @@ extern int pov_gamma_off;      // i_video.c
 static int s_theme_on = 0;
 static int s_outline_on = 0;
 static unsigned char s_outline_index = 0;
+static unsigned char s_outline_of[256];    // per colour index: the index of a line drawn on a point of it (haze, POVFOG)
+static unsigned char s_is_outline[256];    // 1 for every index a line can have
 static unsigned char s_class[256];
 static unsigned char s_rank[256];
 static unsigned char *s_shot = NULL;       // copy of the picture the outline is derived from
@@ -1023,6 +1120,9 @@ static void theme_init(void)
     pov_gamma_off = 1;
     s_outline_on = data[5] != 0;
     s_outline_index = data[6];
+    memset(s_outline_of, s_outline_index, 256);
+    memset(s_is_outline, 0, 256);
+    s_is_outline[s_outline_index] = 1;
     for (i = 0; i < numsectors; i++)
     {
         sectors[i].lightlevel = data[7];
@@ -1091,6 +1191,43 @@ static void ink_init(void)
     memcpy(s_ink_repl, data + 8, 256);
     memcpy(s_ink_floor, data + 264, 256);
     s_ink_on = 1;
+}
+
+// The haze of a theme (lump POVFOG, optional): 0..3 "POVF", 4 version (1), 6..7 the distance in units beyond which the
+// field is one COLORMAP row further (flats and walls: pov_fog_j, pov_fog_scale), 8..263 per colour index the index of a
+// line drawn on a point of it (a hazed navy on a hazed surface). See make_theme.py `povfog_lump`.
+#define POVFOG_LUMP_SIZE 264
+
+extern void R_InitLightTables(void);
+
+static void fog_init(void)
+{
+    int lump = W_CheckNumForName("POVFOG");
+    unsigned char *data;
+    int i, units;
+
+    if (!s_theme_on || lump < 0)
+    {
+        return;
+    }
+    if (W_LumpLength(lump) != POVFOG_LUMP_SIZE)
+    {
+        I_Error("pov-control: POVFOG must be %d bytes, it has %d", POVFOG_LUMP_SIZE, W_LumpLength(lump));
+    }
+    data = W_CacheLumpNum(lump, PU_STATIC);
+    units = data[6] | (data[7] << 8);
+    if (memcmp(data, "POVF", 4) != 0 || data[4] != 1 || units < 640)
+    {
+        I_Error("pov-control: POVFOG has the wrong magic, version or distance");
+    }
+    memcpy(s_outline_of, data + 8, 256);
+    for (i = 0; i < 256; i++)
+    {
+        s_is_outline[s_outline_of[i]] = 1;
+    }
+    pov_fog_j = (units + 15) / 16 - 1;
+    pov_fog_scale = (int)((160LL * 65536) / units);
+    R_InitLightTables();          // the tables were built at start without the haze
 }
 
 static void variants_init(void)
@@ -1360,7 +1497,7 @@ static void outline_pass(void)
             if (y > 0) hit |= is_edge(p, p - w);
             if (hit)
             {
-                I_VideoBuffer[p] = s_outline_index;
+                I_VideoBuffer[p] = s_outline_of[s_shot[p]];
                 line_points[lines++] = p;
             }
         }
@@ -1386,7 +1523,7 @@ static void outline_pass(void)
         {
             int p = n[i];
 
-            if (I_VideoBuffer[p] != s_outline_index && !(pov_idbuf[p] & 0x8000)
+            if (!s_is_outline[I_VideoBuffer[p]] && !(pov_idbuf[p] & 0x8000)
                 && s_class[s_shot[q]] == s_class[s_shot[p]])
             {
                 pov_idbuf[p] |= 0x8000;
@@ -1396,7 +1533,7 @@ static void outline_pass(void)
     }
     for (k = 0; k < grown; k++)
     {
-        I_VideoBuffer[grow_points[k]] = s_outline_index;
+        I_VideoBuffer[grow_points[k]] = s_outline_of[s_shot[grow_points[k]]];
     }
 }
 
@@ -1458,6 +1595,7 @@ static void init_world(void)
     theme_init();
     ink_init();
     variants_init();
+    fog_init();
     POV_SkyLoad();
     // Whatever pattern the map was generated with: start with everything empty.
     for (i = 0; i < POVC_CELLS; i++)
@@ -1511,10 +1649,6 @@ static void render_frame(void)
         memset(I_VideoBuffer, s_outline_index, points);
     }
     R_RenderPlayerView(&players[consoleplayer]);
-    if (POV_SkyActive())
-    {
-        s_drift_drawn = POV_SkyDriftPoints(pov_view_w);
-    }
     if (s_ink_on)
     {
         ink_pass();
@@ -1551,7 +1685,7 @@ void POV_ControlTick(void)
     {
         // the clouds drift on the clock; a picture is due only when they moved a whole point
         POV_SkySetCloudLive((double)(I_GetTimeMS() - s_live_t0));
-        if (POV_SkyDriftPoints(pov_view_w) != s_drift_drawn)
+        if (POV_SkyDirty())
         {
             s_dirty = 1;
         }

@@ -165,7 +165,8 @@ FONT = {  # 3 x 5 digits and a few signs, one string a row
     "0": "111101101101111", "1": "010110010010111", "2": "111001111100111", "3": "111001111001111",
     "4": "101101111001001", "5": "111100111001111", "6": "111100111101111", "7": "111001001001001",
     "8": "111101111101111", "9": "111101111001111", ":": "000010000010000", " ": "000000000000000",
-    "s": "011100110001110", "+": "000010111010000",
+    "s": "011100110001110", "+": "000010111010000", "x": "101101010101101",
+    "E": "111100111100111", "N": "101111111101101", "W": "101101111111101", "S": "111100111001111",
 }
 
 
@@ -252,29 +253,7 @@ def write_detail(out: str, size: str) -> None:
         shutil.rmtree(work, ignore_errors=True)
 
 
-# ---- the sky (--sky): the same field at other times, all round, clouds drifting
-SKY_TIMES = (360, 480, 720, 960, 1110, 1200, 1380, 180)        # 06:00 08:00 12:00 16:00 18:30 20:00 23:00 03:00
-SKY_EYE = (24.5, 24.5)                                          # open ground: nothing within 4 cells
-
-
-def sky_scene() -> list[str]:
-    """Few low groups around the eye, spread on all sides at 6..15 cells, so that the sky is free in every
-    direction (the field of the other samples is dense)."""
-    glider = [(1, 0), (2, 1), (0, 2), (1, 2), (2, 2)]
-    block = [(0, 0), (1, 0), (0, 1), (1, 1)]
-    blinker = [(0, 0), (1, 0), (2, 0)]
-    cells: dict[tuple[int, int], str] = {}
-    for k in range(10):
-        ang = math.radians(k * 36 + 11)
-        cx, cy = int(round(24 + (6 + (k * 7) % 10) * math.cos(ang))), int(round(24 + (6 + (k * 7) % 10) * math.sin(ang)))
-        for dx, dy in (glider, block, blinker)[k % 3]:
-            cells[(cx + dx, cy + dy)] = "own" if k % 4 == 1 else "cell"
-    for y in range(14, 30):
-        cells[(8, y)] = "wall"
-    cells[(8, 13)] = cells[(8, 30)] = "tower"
-    cells[(36, 40)] = cells[(40, 36)] = "tower"
-    return ["cell %d %d %s" % (x, y, k) for (x, y), k in sorted(cells.items())]
-SKY_NOON = 720
+# ---- the sky (--sky): tools/sky_samples.py
 
 
 def berlin_minutes() -> int:
@@ -287,60 +266,6 @@ def berlin_minutes() -> int:
 
 def clock(minute: int) -> str:
     return "%02d:%02d" % (minute // 60, minute % 60)
-
-
-def sky_run(wad: str, work: str, size: str, steps: list[tuple[int, float, float, int]]) -> list[str]:
-    """One engine run, one picture per step (minute, camera angle, cloud seconds, frame count 1)."""
-    lines = sky_scene()
-    for minute, angle, seconds, _n in steps:
-        lines += ["daytime %d" % minute, "clouds %d" % round(seconds), "cam %.2f %.2f %.2f" % (SKY_EYE + (angle,)), "next"]
-    lines.append("quit")
-    binary = os.path.join(ROOT, "doomgeneric", "cosmergon-pov-headless")
-    cmd = [binary, "-iwad", os.path.join(ROOT, "assets", "freedoom", "freedoom1.wad"),
-           "-file", os.path.join(ROOT, "assets", "cosmergon.wad"), "-pov-theme", wad,
-           "-pov-control", "-warp", "1", "1", "-pov-size", size]
-    shutil.rmtree(work, ignore_errors=True)
-    os.makedirs(work)
-    proc = subprocess.run(cmd, input="\n".join(lines) + "\n", text=True, env=dict(os.environ, POV_OUT=work),
-                          capture_output=True, check=False)
-    if proc.returncode != 0:
-        sys.stderr.write(proc.stderr)
-        raise SystemExit("engine failed (%d)" % proc.returncode)
-    return [os.path.join(work, f) for f in sorted(os.listdir(work)) if f.endswith(".ppm")]
-
-
-def write_sky(out: str, size: str) -> None:
-    """Per theme A and B: the day (8 times), all round (4 directions at 17:00), the clouds (5 steps of 10 s),
-    and every picture alone."""
-    import sky_art
-    os.makedirs(out, exist_ok=True)
-    work = os.path.join(out, "_ppm")
-    try:
-        for letter, name in THEME_ORDER[:2]:
-            wad = os.path.join(out, "_theme-%s.wad" % name)
-            with open(wad, "wb") as handle:
-                handle.write(make_theme.wad_bytes(make_theme.build_theme(name)))
-            day = sky_run(wad, work, size, [(m, sky_art.view_towards(m), 0, 1) for m in SKY_TIMES])
-            for m, ppm in zip(SKY_TIMES, day):
-                w, h, pix = ppm2png.read_ppm(ppm)
-                ppm2png.write_png(os.path.join(out, "einzel-%s-%s-%s.png" % (letter, size, clock(m).replace(":", ""))), w, h, pix)
-            sheet([day[:4], day[4:]], os.path.join(out, "tageslauf-%s-%s.png" % (letter, size)), gap=18,
-                  labels=[[clock(m) for m in SKY_TIMES[:4]], [clock(m) for m in SKY_TIMES[4:]]])
-            base = sky_art.view_towards(960)
-            round_ = sky_run(wad, work, size, [(960, base + 90 * k, 0, 1) for k in range(4)])
-            sheet([round_[:2], round_[2:]], os.path.join(out, "rundblick-%s-%s.png" % (letter, size)), gap=18,
-                  labels=[["16:00 +0", "16:00 +90"], ["16:00 +180", "16:00 +270"]])
-            drift = sky_run(wad, work, size, [(SKY_NOON, view_noon(), 10 * k, 1) for k in range(5)])
-            sheet([drift], os.path.join(out, "wolkenzug-%s-%s.png" % (letter, size)), gap=18,
-                  labels=[["%d s" % (10 * k) for k in range(5)]])
-            os.remove(wad)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-
-
-def view_noon() -> float:
-    import sky_art
-    return sky_art.view_towards(SKY_NOON)
 
 
 def texture_sheets(out: str) -> None:
@@ -385,16 +310,17 @@ def main() -> int:
     ap.add_argument("--size", help="<width>x<height> in points (default: the engine's 320 x 200 shown at 640 x 400)")
     ap.add_argument("--fine", action="store_true", help="672x324 and 1280x640 into out/muster-fein")
     ap.add_argument("--sky", action="store_true",
-                    help="the sky over the day, all round and the drifting clouds, themes A and B, 672x324 and "
-                         "1280x640, into out/muster-himmel")
+                    help="the sky over the day, all round, the clouds, a walk, the haze and the levels, themes A and B, "
+                         "672x324 and 1280x640, into out/muster-himmel (tools/sky_samples.py)")
     ap.add_argument("--detail", action="store_true",
                     help="six viewpoints, themes A and B, 672x324 and 1280x640, overview and texture sheets "
                          "into out/muster-detail")
     args = ap.parse_args()
     if args.sky:
         out = os.path.abspath(args.out or os.path.join(ROOT, "out", "muster-himmel"))
+        import sky_samples
         for size in ("672x324", "1280x640"):
-            write_sky(out, size)
+            sky_samples.write_sky(out, size)
     elif args.detail:
         out = os.path.abspath(args.out or os.path.join(ROOT, "out", "muster-detail"))
         for size in ("672x324", "1280x640"):

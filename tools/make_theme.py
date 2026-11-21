@@ -56,6 +56,13 @@ SKY_FIRST = art.SKY_FIRST  # first palette index of the sky bands, 156..; band 0
 SKY_BANDS = 16            # bands of elevation, each a flat colour
 BAND_DEG10 = 30           # a band is 3.0 degrees: 48 degrees of elevation, flat above
 I_SKY = art.I_SKY
+FOG_FAR_UNITS = 3000                  # beyond this distance the field is one row (step) further in the COLORMAP
+# Haze: how far a colour goes to the horizon colour at each step (times the theme's `fog`: 0 off, 1 light, 2 clear)
+FIELD_S = (0.12, 0.26, 0.42)          # the field, steps 1..3
+CLOUD_S = (0.30, 0.50, 0.70)          # a cloud, steps 1..3 (step 0, near: none)
+CUBE_S = (0.45, 0.60, 0.72, 0.85)     # a neighbour cube, steps 0..3: always hazy, the nearest least
+NAVYF_S = (0.15, 0.30, 0.45, 0.60, 0.72, 0.85)    # the lines of far things: the navy of the project, hazed
+FIELD_NAVYF, CLOUD_NAVYF, CUBE_NAVYF = (0, 1, 2), (1, 2, 4), (2, 3, 4, 5)   # index into NAVYF_S per step
 
 # Palette indices: the layout is in theme_art (the pictures are made of indices).
 I_OUTLINE = art.I_OUTLINE
@@ -158,6 +165,7 @@ def build_palette(theme: dict) -> list[tuple[int, int, int]]:
     pal[I_SKY["cloud"]] = cloud
     pal[I_SKY["shade"]] = shade(mix(cloud, top, 0.55), 0.94)       # one shade tone on a cloud's lower edge
     pal[I_SKY["star"]] = (255, 255, 255) if theme.get("stars", 0) else mix(hor, top, 0.5)
+    add_haze(pal, theme, hor)
     for trio in art.TW.values():
         for twin in trio:
             pal[twin] = NAVY
@@ -165,6 +173,30 @@ def build_palette(theme: dict) -> list[tuple[int, int, int]]:
         pal[small] = pal[fleck]
         pal[art.SMALL_TWIN[small]] = NAVY
     return pal
+
+
+def haze(rgb, hor, step_s, theme):
+    """A colour hazed towards the horizon colour by a step's strength times the theme's `fog`."""
+    return mix(rgb, hor, min(0.95, step_s * theme.get("fog", 1.0)))
+
+
+def add_haze(pal, theme, hor) -> None:
+    """The hazed indices: the field's groups, the clouds, the hazed navies and the neighbour cubes (theme_art)."""
+    for g, (_name, members, _orient) in enumerate(art.FOG_GROUPS):
+        for level in range(1, art.FOG_LEVELS + 1):
+            pal[art.i_fog(g, level)] = haze(pal[members[0]], hor, FIELD_S[level - 1], theme)
+    for level, (fill, shd) in art.I_CLOUD_FOG.items():
+        pal[fill] = haze(pal[I_SKY["cloud"]], hor, CLOUD_S[level - 1], theme)
+        pal[shd] = haze(pal[I_SKY["shade"]], hor, CLOUD_S[level - 1], theme)
+    for i, strength in enumerate(NAVYF_S):
+        pal[art.I_NAVYF[i]] = haze(NAVY, hor, strength, theme)
+    face = hexrgb(theme["cell"])
+    tones = {"xs": face, "ys": hexrgb(theme["cell_shade"]) if "cell_shade" in theme else shade(face),
+             "b": shade(shade(face))}
+    tones["xl"], tones["yl"] = mix(tones["xs"], NAVY, 0.40), mix(tones["ys"], NAVY, 0.40)
+    for level in range(4):
+        for tone, rgb in tones.items():
+            pal[art.i_cube(level, tone)] = haze(rgb, hor, CUBE_S[level], theme)
 
 
 def playpal(pals) -> bytes:
@@ -178,12 +210,34 @@ def playpal(pals) -> bytes:
 
 
 def povsky_lump() -> bytes:
-    """Header of the sky (see pov_sky.c POV_SkyLoad): indices and the minute and star flag of each key."""
-    out = bytearray(b"POVS" + bytes([1, SKY_BANDS, len(theme_day.KEYS), BAND_DEG10]))
-    out += bytes([I_SKY["sun"], I_SKY["moon"], I_SKY["cloud"], I_SKY["shade"], I_SKY["star"], SKY_FIRST, 0, 0])
+    """Header of the sky (see pov_sky.c POV_SkyLoad): indices (stars, sun, moon, the bands, the hazed clouds, the
+    cubes) and the minute and star flag of each key of the day."""
+    out = bytearray(b"POVS" + bytes([2, SKY_BANDS, len(theme_day.KEYS), BAND_DEG10]))
+    out += bytes([I_SKY["sun"], I_SKY["moon"], I_SKY["star"], SKY_FIRST])
+    for level in range(4):
+        pair = (I_SKY["cloud"], I_SKY["shade"]) if level == 0 else art.I_CLOUD_FOG[level]
+        out += bytes(pair)
+    for level in range(4):
+        out += bytes(art.i_cube(level, tone) for tone in art.CUBE_TONES)
+    assert len(out) == 40
     for minute, stars in theme_day.key_bytes():
         out += struct.pack("<HBB", minute, stars, 0)
     return bytes(out)
+
+
+def povfog_lump() -> bytes:
+    """Lump POVFOG: "POVF", version, the distance (units) beyond which the field is one COLORMAP row further, and per
+    colour index the index a line on a point of it gets (the navy, or a hazed navy on a hazed surface)."""
+    line = bytearray([I_OUTLINE]) * 256
+    for g in range(len(art.FOG_GROUPS)):
+        for level in range(1, art.FOG_LEVELS + 1):
+            line[art.i_fog(g, level)] = art.I_NAVYF[FIELD_NAVYF[level - 1]]
+    for level, (fill, shd) in art.I_CLOUD_FOG.items():
+        line[fill] = line[shd] = art.I_NAVYF[CLOUD_NAVYF[level - 1]]
+    for level in range(4):
+        for tone in art.CUBE_TONES:
+            line[art.i_cube(level, tone)] = art.I_NAVYF[CUBE_NAVYF[level]]
+    return b"POVF" + struct.pack("<BBH", 1, 0, FOG_FAR_UNITS) + bytes(line)
 
 
 def nearest(pal, rgb) -> int:
@@ -208,6 +262,26 @@ def navy_rows() -> dict[int, tuple[int, int]]:
     return out
 
 
+def apply_haze(table: bytearray, row: int, start: int) -> None:
+    """The field's haze in one COLORMAP row: every surface index (and every line or fleck that has folded into
+    one) becomes the hazed index of its group at the step the row stands for: row_s - 1 step 1 (640 units), row_s
+    step 2 (1280), row_s + 1 step 3 (beyond FOG_FAR_UNITS). The border wall has no orientation (one texture for
+    all four sides): it is always at the last step, the far horizon."""
+    member_group = {}
+    for g, (_name, members, orient) in enumerate(art.FOG_GROUPS):
+        for m in members:
+            member_group[m] = (g, orient)
+    for i in range(256):
+        hit = member_group.get(table[i])
+        if hit is None or i == I_OUTLINE:
+            continue
+        g, orient = hit
+        row_s = start + OFFSET.get(orient, 0)
+        level = art.FOG_LEVELS if orient == "border" else max(0, min(art.FOG_LEVELS, row - row_s + 2))
+        if level:
+            table[i] = art.i_fog(g, level)
+
+
 def colormap(pal) -> bytes:
     windows = navy_rows()
     base_of = {t: b for b, trio in art.TW.items() for t in trio}
@@ -230,6 +304,7 @@ def colormap(pal) -> bytes:
             twin = art.SMALL_TWIN[small]
             if row >= row_s - FOLD_Q[orient][2]:
                 table[twin] = surface if gone else small
+        apply_haze(table, row, start)
         out += table
     # table 32: the invulnerability table of the format (grey, inverted), unused by this program
     for p in pal:
@@ -358,12 +433,18 @@ def theme_lump() -> bytes:
     cls = list(range(256))
     rank = [3] * 256
     for i in range(SKY_FIRST, 256):
-        cls[i], rank[i] = 0, 0           # all sky bands are one surface: no lines in the sky
+        cls[i], rank[i] = 0, 1           # all sky bands are one surface: no lines in the sky (rank 1: things in the sky are 0)
     cls[I_SKY["star"]] = 0               # a star is a speck of the sky, no outline
-    # sun and moon: class 5 (the sky, class 0, takes the line: it lies outside the disc); a cloud is class 6,
-    # so against the sun the sun's pixel takes the line and a cloud keeps its whole area
-    for key, c in (("sun", 5), ("moon", 5), ("cloud", 6), ("shade", 6)):
-        cls[I_SKY[key]], rank[I_SKY[key]] = c, 0
+    # sun and moon: class 5 (the sky, class 0, takes the line: it lies outside the disc). Clouds and cubes are
+    # rank 0: the line is on their own side (a hazed navy on a hazed thing); a cloud is class 6, a cube's sides 50/51/52
+    for key, c, r in (("sun", 5, 1), ("moon", 5, 1), ("cloud", 6, 0), ("shade", 6, 0)):
+        cls[I_SKY[key]], rank[I_SKY[key]] = c, r
+    for lv, pair in art.I_CLOUD_FOG.items():
+        for i in pair:
+            cls[i], rank[i] = 6, 0
+    for lv in range(4):
+        for tone in art.CUBE_TONES:
+            cls[art.i_cube(lv, tone)], rank[art.i_cube(lv, tone)] = 50 + {"x": 0, "y": 1, "b": 2}[tone[0]], 0
     for i in (I_GROUND, I_GROUND_SHADE, I_GROUND_LIGHT):    # the ground's stages are one surface
         cls[i], rank[i] = I_GROUND, 1
     rank[I_BORDER] = 2
@@ -373,6 +454,9 @@ def theme_lump() -> bytes:
             for k in keys:
                 cls[ids[k]], rank[ids[k]] = ids[keys[0]], r
     rank[I_BAND["x"]], rank[I_BAND["y"]] = 4, 3
+    for g, (_name, members, _orient) in enumerate(art.FOG_GROUPS):     # a hazed surface is its surface
+        for level in range(1, art.FOG_LEVELS + 1):
+            cls[art.i_fog(g, level)], rank[art.i_fog(g, level)] = cls[members[0]], rank[members[0]]
     for base, trio in art.TW.items():    # a line counts as the surface it lies in
         for twin in trio:
             cls[twin], rank[twin] = cls[base], rank[base]
@@ -419,8 +503,12 @@ def split_patches(rows: list[bytearray]) -> list[bytes]:
     return [column_patch(transpose(rows[0:128])), column_patch(transpose(rows[128:256]))]
 
 
-def build_theme(name: str) -> list[tuple[str, bytes]]:
-    theme = THEMES[name]
+def build_theme(name: str, fog: float | None = None, clouds=None) -> list[tuple[str, bytes]]:
+    """The lumps of a theme. `fog`: the strength of the haze (0 off, 1 light = the default, 2 clear); `clouds`: a list
+    of (x, y, base height, width, shape) in units instead of the theme's own sky (tests)."""
+    theme = dict(THEMES[name])
+    if fog is not None:
+        theme["fog"] = fog
     pal = build_palette(theme)
     pals = theme_day.key_palettes(theme, build_palette)
     lumps: list[tuple[str, bytes]] = [
@@ -428,7 +516,10 @@ def build_theme(name: str) -> list[tuple[str, bytes]]:
         ("POVX", povx_lump()),
         ("POVINK", povink_lump()),
         ("POVSKY", povsky_lump()),
-        ("POVCLD", sky_art.cloud_layer()),
+        ("POVWLD", sky_art.world_lump(clouds)),
+        ("POVCLS", sky_art.sprite_lump()),
+        ("POVSTR", sky_art.stars_lump()),
+        ("POVFOG", povfog_lump()),
         ("PLAYPAL", playpal(pals)),
         ("COLORMAP", colormap(pal)),
     ]

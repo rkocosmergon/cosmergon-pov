@@ -79,6 +79,7 @@ extern byte*		dc_translation;
 // Span blitting for rows, floor/ceiling.
 // No Sepctre effect needed.
 void 	R_DrawSpan (void);
+void 	R_DrawSpanFine (void);	// cosmergon-pov: full 16.16 position, see r_draw.c
 
 // Low resolution mode, 160x200?
 void 	R_DrawSpanLow (void);

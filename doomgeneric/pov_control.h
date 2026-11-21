@@ -9,6 +9,8 @@
 
 #include <stdio.h>
 
+#include "i_video.h"      // POV_MIN_W .. POV_MAX_H
+
 // Hard limits of the protocol (checked by the parser, derived in COSMERGON.md).
 #define POVC_GRID       48          // cells per side of the window
 #define POVC_CELLS      (POVC_GRID * POVC_GRID)
@@ -25,6 +27,11 @@ int POV_ControlEnabled(void);
 // in every tick in which something changed (and once at the start).
 void POV_ControlSetLive(int live);
 int POV_ControlIsLive(void);
+
+// Picture size in points (COSMERGON.md, "Picture size"): 160..1280 x 100..800. Returns 1 when taken
+// (the next frame has that size and is shown 1 : 1), 0 when outside the range (nothing changes).
+// Used by the `size` line and by a platform layer that follows its window.
+int POV_ControlRequestSize(int width, int height);
 
 // One iteration of the main loop (called by doomgeneric_Tick in place of the game loop).
 void POV_ControlTick(void);

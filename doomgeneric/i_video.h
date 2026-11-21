@@ -27,6 +27,37 @@
 #define SCREENWIDTH  320
 #define SCREENHEIGHT 200
 
+// cosmergon-pov: with -pov-control the renderer draws a picture of any size from POV_MIN_W x
+// POV_MIN_H up to POV_MAX_W x POV_MAX_H (derived in COSMERGON.md, "Picture size"); its arrays and
+// the video buffer are sized for the largest. Doom's own user interface (menu, status bar, wipe,
+// automap; not reached with -pov-control) keeps SCREENWIDTH x SCREENHEIGHT, and so does everything
+// else without the switch. Other builds than the view-only ones keep 320 x 200 here too.
+#ifdef POV_VIEW_ONLY
+#define POV_MAX_W    1280
+#define POV_MAX_H    800
+#else
+#define POV_MAX_W    SCREENWIDTH
+#define POV_MAX_H    SCREENHEIGHT
+#endif
+#define POV_MIN_W    160
+#define POV_MIN_H    100
+
+// The size the engine was tuned for (Doom's own). Tables that are meant to be independent of the
+// picture size (light by distance, sky) are written against it; at this size every picture is
+// bit-identical to the one before the picture size became variable.
+#define POV_REF_W    SCREENWIDTH
+#define POV_REF_H    SCREENHEIGHT
+
+// Size of the picture drawn now, and the whole-number factor by which the platform layer
+// enlarges it (2 for the default 320 x 200 shown at 640 x 400, 1 once a size was chosen).
+extern int pov_view_w;
+extern int pov_view_h;
+extern int pov_out_scale;
+
+// Distance in bytes between two rows of the picture in I_VideoBuffer: the picture's own width with
+// -pov-control (tightly packed), SCREENWIDTH otherwise (r_draw.c, R_InitBuffer).
+extern int pov_stride;
+
 // Screen width used for "squash" scale functions
 
 #define SCREENWIDTH_4_3 256

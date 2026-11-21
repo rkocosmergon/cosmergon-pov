@@ -41,6 +41,8 @@
 
 
 
+#define POV_VP_EMPTY		0xffff
+
 // Silhouette, needed for clipping Segs (mainly)
 // and sprites representing things.
 #define SIL_NONE		0
@@ -54,7 +56,7 @@
 #ifdef POV_UPSTREAM_LIMITS
 #define MAXDRAWSEGS		256
 #define MAXVISPLANES		128
-#define MAXOPENINGS		SCREENWIDTH*64
+#define MAXOPENINGS		(POV_REF_W*64)
 #define MAXSEGS			32
 #else
 #define POV_GRID		48
@@ -66,10 +68,11 @@
 // R_Subsector finds <= 2 planes per subsector, R_CheckPlane duplicates <= 2 per drawseg.
 #define MAXVISPLANES		(2*POV_SECTORS + 2*MAXDRAWSEGS)
 // A column is covered by <= 95 lines (47 + 47 interior + 1 border), x2 for column rounding
-// at shared vertices, x2 for the top and the bottom clip array copied per drawseg.
-#define MAXOPENINGS		(SCREENWIDTH*2*2*(2*POV_GRID-1))
-// Solid posts are separated by at least one column: <= SCREENWIDTH/2, plus 2 sentinels.
-#define MAXSEGS			(SCREENWIDTH/2 + 2)
+// at shared vertices, x2 for the top and the bottom clip array copied per drawseg. The bound is per
+// column, so it grows with the widest picture (POV_MAX_W = 1280): 380 * 1280 = 486,400.
+#define MAXOPENINGS		(POV_MAX_W*2*2*(2*POV_GRID-1))
+// Solid posts are separated by at least one column: <= POV_MAX_W/2 = 640, plus 2 sentinels.
+#define MAXSEGS			(POV_MAX_W/2 + 2)
 #endif
 
 
@@ -452,15 +455,17 @@ typedef struct
   
   // leave pads for [minx-1]/[maxx+1]
   
-  byte		pad1;
+  // cosmergon-pov: 16 bit rows (upstream byte, which holds 0..254 and 0xff as "empty": enough for
+  // 200 rows, not for 800). POV_VP_EMPTY is 0xffff, larger than any row.
+  unsigned short	pad1;
   // Here lies the rub for all
   //  dynamic resize/change of resolution.
-  byte		top[SCREENWIDTH];
-  byte		pad2;
-  byte		pad3;
+  unsigned short	top[POV_MAX_W];
+  unsigned short	pad2;
+  unsigned short	pad3;
   // See above.
-  byte		bottom[SCREENWIDTH];
-  byte		pad4;
+  unsigned short	bottom[POV_MAX_W];
+  unsigned short	pad4;
 
 } visplane_t;
 

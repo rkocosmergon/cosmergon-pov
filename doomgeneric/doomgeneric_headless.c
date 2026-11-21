@@ -39,6 +39,13 @@ static const char *s_out_dir = NULL;
 static int s_control = 0;
 static unsigned long s_live_ms = 10;
 static struct timespec s_start;
+// Time spent drawing, without writing the frame: from the end of the previous DG_DrawFrame (or
+// the start of the first step) to the call of this one. Includes reading control lines, the
+// renderer, the outline pass and the conversion to RGB (what the window layer also does).
+static double s_work_total_ms = 0.0;
+static double s_work_worst_ms = 0.0;
+static double s_work_mark_ms = -1.0;
+static unsigned long s_work_frames = 0;
 
 static unsigned long env_ulong(const char *name, unsigned long fallback)
 {
@@ -86,25 +93,26 @@ static void write_frame(unsigned long number)
         fprintf(stderr, "headless: cannot write %s: %s\n", path, strerror(errno));
         exit(1);
     }
-    row = malloc((size_t)DOOMGENERIC_RESX * 3);
+    row = malloc((size_t)DG_OutW * 3);
     if (row == NULL)
     {
         fprintf(stderr, "headless: out of memory\n");
         exit(1);
     }
-    fprintf(file, "P6\n%d %d\n255\n", DOOMGENERIC_RESX, DOOMGENERIC_RESY);
-    for (y = 0; y < DOOMGENERIC_RESY; y++)
+    // cosmergon-pov: the picture in the buffer is DG_OutW x DG_OutH, tightly packed
+    fprintf(file, "P6\n%d %d\n255\n", DG_OutW, DG_OutH);
+    for (y = 0; y < DG_OutH; y++)
     {
-        for (x = 0; x < DOOMGENERIC_RESX; x++)
+        for (x = 0; x < DG_OutW; x++)
         {
             // pixel_t is 0x00RRGGBB (red offset 16, see i_video.c)
-            uint32_t pixel = DG_ScreenBuffer[y * DOOMGENERIC_RESX + x];
+            uint32_t pixel = DG_ScreenBuffer[y * DG_OutW + x];
 
             row[x * 3 + 0] = (pixel >> 16) & 0xFF;
             row[x * 3 + 1] = (pixel >> 8) & 0xFF;
             row[x * 3 + 2] = pixel & 0xFF;
         }
-        if (fwrite(row, 3, DOOMGENERIC_RESX, file) != (size_t)DOOMGENERIC_RESX)
+        if (fwrite(row, 3, DG_OutW, file) != (size_t)DG_OutW)
         {
             fprintf(stderr, "headless: write error on %s\n", path);
             exit(1);
@@ -160,6 +168,9 @@ static void finish(void)
 
     fprintf(stderr, "headless: frames=%lu real_ms=%.1f ms_per_frame=%.3f\n",
             s_frames, ms, s_frames > 0 ? ms / (double)s_frames : 0.0);
+    fprintf(stderr, "headless: size=%dx%d work_ms=%.3f worst_ms=%.3f (per frame, without writing the frames)\n",
+            DG_OutW, DG_OutH, s_work_frames > 0 ? s_work_total_ms / (double)s_work_frames : 0.0,
+            s_work_worst_ms);
     fprintf(stderr, "headless: highwater drawsegs=%d visplanes=%d openings=%d solidsegs=%d vissprites=%d\n",
             pov_hw_drawsegs, pov_hw_visplanes, pov_hw_openings, pov_hw_solidsegs, pov_hw_vissprites);
     fprintf(stderr, "headless: zone_free_or_purgable_bytes=%d\n", Z_FreeMemory());
@@ -169,12 +180,26 @@ static void finish(void)
 
 void DG_DrawFrame(void)
 {
+    double entered = elapsed_ms();
+
+    if (s_work_mark_ms >= 0.0)
+    {
+        double work = entered - s_work_mark_ms;
+
+        s_work_total_ms += work;
+        s_work_frames++;
+        if (work > s_work_worst_ms)
+        {
+            s_work_worst_ms = work;
+        }
+    }
     s_frames++;
     s_virtual_ms += POV_MS_PER_FRAME;
     if (s_frames % s_every == 0)
     {
         write_frame(s_frames);
     }
+    s_work_mark_ms = elapsed_ms();
     if (s_frames >= s_max_frames)
     {
         finish();

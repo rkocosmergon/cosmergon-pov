@@ -38,6 +38,7 @@ rcsid[] = "$Id: i_x.c,v 1.6 1997/02/03 22:45:10 b1 Exp $";
 #include "doomkeys.h"
 
 #include "doomgeneric.h"
+#include "pov_control.h"      // cosmergon-pov
 
 #include <stdbool.h>
 #include <stdlib.h>
@@ -74,6 +75,12 @@ struct FB_ScreenInfo
 
 static struct FB_ScreenInfo s_Fb;
 int fb_scaling = 1;
+
+// cosmergon-pov: picture size and enlargement (i_video.h). Default 320 x 200 shown 2 x as 640 x 400,
+// the way it was before the size became variable; POV_SetSize (pov_control.c) changes it.
+int pov_view_w = POV_REF_W;
+int pov_view_h = POV_REF_H;
+int pov_out_scale = 2;
 int usemouse = 0;
 
 
@@ -287,7 +294,8 @@ void I_InitGraphics (void)
 
 
     /* Allocate screen to draw to */
-	I_VideoBuffer = (byte*)Z_Malloc (SCREENWIDTH * SCREENHEIGHT, PU_STATIC, NULL);  // For DOOM to draw on
+	// cosmergon-pov: room for the largest picture (POV_MAX_W x POV_MAX_H; 320 x 200 without the switch)
+	I_VideoBuffer = (byte*)Z_Malloc (POV_MAX_W * POV_MAX_H, PU_STATIC, NULL);  // For DOOM to draw on
 
 	screenvisible = true;
 
@@ -320,6 +328,44 @@ void I_UpdateNoBlit (void)
 
 void I_FinishUpdate (void)
 {
+#ifdef POV_VIEW_ONLY
+    // cosmergon-pov: with -pov-control the picture is pov_view_w x pov_view_h, tightly packed at the
+    // start of I_VideoBuffer; it goes tightly packed into DG_ScreenBuffer, every point pov_out_scale
+    // times in both directions (the default 320 x 200 -> 640 x 400 is the old picture, byte for byte).
+    if (POV_ControlEnabled())
+    {
+        int row;
+        int bytes_per_pixel = s_Fb.bits_per_pixel / 8;
+        size_t row_bytes;
+        unsigned char *in = (unsigned char *) I_VideoBuffer;
+        unsigned char *out = (unsigned char *) DG_ScreenBuffer;
+
+        if (pov_stride != pov_view_w || pov_view_w * pov_out_scale > DG_CAPACITY_X
+            || pov_view_h * pov_out_scale > DG_CAPACITY_Y)
+        {
+            I_Error("I_FinishUpdate: picture %d x %d (x %d, stride %d) does not fit the buffer %d x %d",
+                    pov_view_w, pov_view_h, pov_out_scale, pov_stride, DG_CAPACITY_X, DG_CAPACITY_Y);
+        }
+        fb_scaling = pov_out_scale;
+        DG_OutW = pov_view_w * pov_out_scale;
+        DG_OutH = pov_view_h * pov_out_scale;
+        row_bytes = (size_t)DG_OutW * bytes_per_pixel;
+        for (row = 0; row < pov_view_h; row++)
+        {
+            int k;
+
+            cmap_to_fb(out, in, pov_view_w);
+            for (k = 1; k < pov_out_scale; k++)
+            {
+                memcpy(out + row_bytes * k, out, row_bytes);
+            }
+            out += row_bytes * pov_out_scale;
+            in += pov_stride;
+        }
+        DG_DrawFrame();
+        return;
+    }
+#endif
     int y;
     int x_offset, y_offset, x_offset_end;
     unsigned char *line_in, *line_out;

@@ -148,6 +148,66 @@ void POV_ControlSummary(FILE *out)
 }
 
 // ---------------------------------------------------------------------------------------
+// Picture size (pov_view_w x pov_view_h, i_video.c). Without a choice the engine draws 320 x 200
+// and the platform layer shows it twice as large (640 x 400), the way it always did. A choice (the
+// `size` line, -pov-size, or the window's own size) draws exactly that many points, shown 1 : 1.
+// ---------------------------------------------------------------------------------------
+extern boolean setsizeneeded;
+
+int POV_ControlRequestSize(int width, int height)
+{
+    if (width < POV_MIN_W || width > POV_MAX_W || height < POV_MIN_H || height > POV_MAX_H)
+    {
+        return 0;
+    }
+    if (width != pov_view_w || height != pov_view_h || pov_out_scale != 1)
+    {
+        pov_view_w = width;
+        pov_view_h = height;
+        pov_out_scale = 1;
+        if (s_ready)
+        {
+            R_SetViewSize(11, 0);       // takes effect in the next frame (render_frame)
+        }
+        s_dirty = 1;
+    }
+    return 1;
+}
+
+// -pov-size <w>x<h>: exactly two whole numbers in range, else the program stops (a wrong command
+// line is a mistake of the caller, not a line to skip).
+static void size_from_command_line(void)
+{
+    int i = M_CheckParmWithArgs("-pov-size", 1);
+    const char *text;
+    char *end = NULL;
+    long w, h;
+
+    if (i <= 0)
+    {
+        return;
+    }
+    text = myargv[i + 1];
+    errno = 0;
+    w = strtol(text, &end, 10);
+    if (errno != 0 || end == text || *end != 'x' || !isdigit((unsigned char)text[0]))
+    {
+        I_Error("pov-control: -pov-size needs <width>x<height>, got '%s'", text);
+    }
+    text = end + 1;
+    h = strtol(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' || !isdigit((unsigned char)text[0]))
+    {
+        I_Error("pov-control: -pov-size needs <width>x<height>, got '%s'", myargv[i + 1]);
+    }
+    if (!POV_ControlRequestSize((int)(w > 100000 ? 100000 : w), (int)(h > 100000 ? 100000 : h)))
+    {
+        I_Error("pov-control: -pov-size %ldx%ld is outside %dx%d .. %dx%d", w, h,
+                POV_MIN_W, POV_MIN_H, POV_MAX_W, POV_MAX_H);
+    }
+}
+
+// ---------------------------------------------------------------------------------------
 // World changes
 // ---------------------------------------------------------------------------------------
 static short tex_num(const char *name)
@@ -298,7 +358,7 @@ static void commit(void)
 // ---------------------------------------------------------------------------------------
 // Parser: one line -> one validated command. Nothing is applied before the whole line is valid.
 // ---------------------------------------------------------------------------------------
-typedef enum { OP_CELL, OP_ROW, OP_THING, OP_GONE, OP_CAM, OP_LIGHT, OP_NEXT, OP_QUIT } op_t;
+typedef enum { OP_CELL, OP_ROW, OP_THING, OP_GONE, OP_CAM, OP_LIGHT, OP_NEXT, OP_SIZE, OP_QUIT } op_t;
 
 typedef struct
 {
@@ -613,6 +673,19 @@ static const char *parse_line(const unsigned char *line, size_t len, command_t *
         }
         return NULL;
     }
+    if (strcmp(tok[0], "size") == 0)
+    {
+        if (ntok != 3)
+        {
+            return "size needs <width> <height>";
+        }
+        c->op = OP_SIZE;
+        if (!parse_int(tok[1], POV_MIN_W, POV_MAX_W, &c->a) || !parse_int(tok[2], POV_MIN_H, POV_MAX_H, &c->b))
+        {
+            return "size must be integers, width 160..1280, height 100..800";
+        }
+        return NULL;
+    }
     if (strcmp(tok[0], "quit") == 0)
     {
         if (ntok != 1)
@@ -663,6 +736,9 @@ static void apply(const command_t *c)
         break;
     case OP_NEXT:
         s_pending += (unsigned long)c->a;
+        break;
+    case OP_SIZE:
+        POV_ControlRequestSize(c->a, c->b);
         break;
     case OP_QUIT:
         s_quit = 1;
@@ -832,8 +908,8 @@ static void theme_init(void)
     memcpy(s_rank, data + 264, 256);
     if (s_outline_on)
     {
-        static unsigned short idmem[SCREENWIDTH * SCREENHEIGHT];
-        static unsigned char shotmem[SCREENWIDTH * SCREENHEIGHT];
+        static unsigned short idmem[POV_MAX_W * POV_MAX_H];
+        static unsigned char shotmem[POV_MAX_W * POV_MAX_H];
 
         pov_idbuf = idmem;
         s_shot = shotmem;
@@ -845,6 +921,10 @@ static int is_edge(int p, int q)
     unsigned char a = s_shot[p], b = s_shot[q];
     int ia = pov_idbuf[p], ib = pov_idbuf[q];
 
+    if (a == b && ia == ib)
+    {
+        return 0;       // the common case, and what the rules below give for it
+    }
     if (ia != 0 && ib != 0 && ia != ib)
     {
         // two wall planes: the line goes on the one with the lower id (any fixed rule will do)
@@ -857,29 +937,73 @@ static int is_edge(int p, int q)
     return s_rank[a] < s_rank[b] || (s_rank[a] == s_rank[b] && s_class[a] < s_class[b]);
 }
 
-// Lines on the finished picture (8 bit, before the palette): one pixel, on the side of the
-// lower rank, so a surface keeps its full area and the line sits outside of it.
+// Width of the line in points: 1, or 2 from POV_OUTLINE_WIDE_FROM on (decided by looking at the
+// samples, COSMERGON.md "Picture size"). At 320 points shown twice the line was 2 screen points.
+#define POV_OUTLINE_WIDE_FROM 901
+static int s_outline_width = 1;
+
+// Lines on the finished picture (8 bit, before the palette): one point, on the side of the
+// lower rank, so a surface keeps its full area and the line sits outside of it. The picture is
+// pov_view_w x pov_view_h bytes, tightly packed (stride = width, pov_stride).
 static void outline_pass(void)
 {
-    int x, y;
+    static int line_points[POV_MAX_W * POV_MAX_H];      // the points set in the first pass
+    static int grow_points[POV_MAX_W * POV_MAX_H];      // the points the second pass adds
+    int x, y, k;
+    int w = pov_view_w, h = pov_view_h;
+    int lines = 0, grown = 0;
 
-    memcpy(s_shot, I_VideoBuffer, SCREENWIDTH * SCREENHEIGHT);
-    for (y = 0; y < SCREENHEIGHT; y++)
+    memcpy(s_shot, I_VideoBuffer, (size_t)w * h);
+    for (y = 0; y < h; y++)
     {
-        for (x = 0; x < SCREENWIDTH; x++)
+        for (x = 0; x < w; x++)
         {
-            int p = y * SCREENWIDTH + x;
+            int p = y * w + x;
             int hit = 0;
 
-            if (x + 1 < SCREENWIDTH) hit |= is_edge(p, p + 1);
+            if (x + 1 < w) hit |= is_edge(p, p + 1);
             if (x > 0) hit |= is_edge(p, p - 1);
-            if (y + 1 < SCREENHEIGHT) hit |= is_edge(p, p + SCREENWIDTH);
-            if (y > 0) hit |= is_edge(p, p - SCREENWIDTH);
+            if (y + 1 < h) hit |= is_edge(p, p + w);
+            if (y > 0) hit |= is_edge(p, p - w);
             if (hit)
             {
                 I_VideoBuffer[p] = s_outline_index;
+                line_points[lines++] = p;
             }
         }
+    }
+    if (s_outline_width < 2)
+    {
+        return;
+    }
+    // Second point: next to a line point, a point of the same surface as the line point's original.
+    // Marked in pov_idbuf (bit 15; wall ids are small) and listed first, applied afterwards, so that
+    // the line grows by exactly one point. The work follows the length of the lines, not the picture.
+    for (k = 0; k < lines; k++)
+    {
+        int q = line_points[k];
+        int qx = q % w, qy = q / w;
+        int n[4], m = 0, i;
+
+        if (qx + 1 < w) n[m++] = q + 1;
+        if (qx > 0) n[m++] = q - 1;
+        if (qy + 1 < h) n[m++] = q + w;
+        if (qy > 0) n[m++] = q - w;
+        for (i = 0; i < m; i++)
+        {
+            int p = n[i];
+
+            if (I_VideoBuffer[p] != s_outline_index && !(pov_idbuf[p] & 0x8000)
+                && s_class[s_shot[q]] == s_class[s_shot[p]])
+            {
+                pov_idbuf[p] |= 0x8000;
+                grow_points[grown++] = p;
+            }
+        }
+    }
+    for (k = 0; k < grown; k++)
+    {
+        I_VideoBuffer[grow_points[k]] = s_outline_index;
     }
 }
 
@@ -961,14 +1085,14 @@ static void init_world(void)
     players[consoleplayer].extralight = 0;
     players[consoleplayer].fixedcolormap = 0;
 
-    // Full screen 3D view, no status bar. The palette is set once (nothing else does it here).
+    // Full picture 3D view, no status bar. The palette is set once (nothing else does it here).
+    size_from_command_line();
     R_SetViewSize(11, 0);
     I_SetPalette(W_CacheLumpName("PLAYPAL", PU_CACHE));
     s_dirty = 1;        // live mode: the first picture is drawn without waiting for a line
     s_ready = 1;
 }
 
-extern boolean setsizeneeded;
 void R_ExecuteSetViewSize(void);
 
 static void render_frame(void)
@@ -980,10 +1104,13 @@ static void render_frame(void)
     }
     if (s_outline_on)
     {
-        memset(pov_idbuf, 0, SCREENWIDTH * SCREENHEIGHT * sizeof(*pov_idbuf));
+        size_t points = (size_t)pov_view_w * pov_view_h;
+
+        s_outline_width = pov_view_w >= POV_OUTLINE_WIDE_FROM ? 2 : 1;
+        memset(pov_idbuf, 0, points * sizeof(*pov_idbuf));
         // the renderer leaves single pixels at some wall joints uncovered (upstream); they would
         // show the previous picture. Start from the outline colour: such a pixel becomes line.
-        memset(I_VideoBuffer, s_outline_index, SCREENWIDTH * SCREENHEIGHT);
+        memset(I_VideoBuffer, s_outline_index, points);
     }
     R_RenderPlayerView(&players[consoleplayer]);
     if (s_outline_on)

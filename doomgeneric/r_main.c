@@ -95,7 +95,13 @@ int			viewangletox[FINEANGLES/2];
 // The xtoviewangleangle[] table maps a screen pixel
 // to the lowest viewangle that maps back to x ranges
 // from clipangle to -clipangle.
-angle_t			xtoviewangle[SCREENWIDTH+1];
+angle_t			xtoviewangle[POV_MAX_W+1];
+
+// cosmergon-pov: scale of the sky texture (texels per picture row, 16.16) and the limits that keep
+// the numeric range of the 320 x 200 renderer at any picture size (see R_ExecuteSetViewSize).
+fixed_t			pov_sky_iscale;
+fixed_t			pov_max_wall_scale;
+fixed_t			pov_minz;
 
 lighttable_t*		scalelight[LIGHTLEVELS][MAXLIGHTSCALE];
 lighttable_t*		scalelightfixed[MAXLIGHTSCALE];
@@ -486,13 +492,13 @@ fixed_t R_ScaleFromGlobalAngle (angle_t visangle)
     {
 	scale = FixedDiv (num, den);
 
-	if (scale > 64*FRACUNIT)
-	    scale = 64*FRACUNIT;
+	if (scale > pov_max_wall_scale)
+	    scale = pov_max_wall_scale;
 	else if (scale < 256)
 	    scale = 256;
     }
     else
-	scale = 64*FRACUNIT;
+	scale = pov_max_wall_scale;
 	
     return scale;
 }
@@ -622,7 +628,8 @@ void R_InitLightTables (void)
 	startmap = ((LIGHTLEVELS-1-i)*2)*NUMCOLORMAPS/LIGHTLEVELS;
 	for (j=0 ; j<MAXLIGHTZ ; j++)
 	{
-	    scale = FixedDiv ((SCREENWIDTH/2*FRACUNIT), (j+1)<<LIGHTZSHIFT);
+	    // cosmergon-pov: by distance only, so written against the reference width (320), not the picture
+	    scale = FixedDiv ((POV_REF_W/2*FRACUNIT), (j+1)<<LIGHTZSHIFT);
 	    scale >>= LIGHTSCALESHIFT;
 	    level = startmap - scale/DISTMAP;
 	    
@@ -677,8 +684,9 @@ void R_ExecuteSetViewSize (void)
 
     if (setblocks == 11)
     {
-	scaledviewwidth = SCREENWIDTH;
-	viewheight = SCREENHEIGHT;
+	// cosmergon-pov: the picture size (default 320 x 200; pov_control.c changes it)
+	scaledviewwidth = pov_view_w;
+	viewheight = pov_view_h;
     }
     else
     {
@@ -691,7 +699,10 @@ void R_ExecuteSetViewSize (void)
 	
     centery = viewheight/2;
     centerx = viewwidth/2;
-    centerxfrac = centerx<<FRACBITS;
+    // cosmergon-pov: half the width in 16.16, also for an odd width (upstream: centerx<<FRACBITS, the
+    // same for an even one). With an odd width the whole picture lies symmetrically about the centre
+    // and the last column is covered (it was not: the right edge ray fell on column viewwidth).
+    centerxfrac = (viewwidth * FRACUNIT) / 2;
     centeryfrac = centery<<FRACBITS;
     projection = centerxfrac;
 
@@ -700,7 +711,7 @@ void R_ExecuteSetViewSize (void)
 	colfunc = basecolfunc = R_DrawColumn;
 	fuzzcolfunc = R_DrawFuzzColumn;
 	transcolfunc = R_DrawTranslatedColumn;
-	spanfunc = R_DrawSpan;
+	spanfunc = viewwidth > POV_REF_W ? R_DrawSpanFine : R_DrawSpan;	// cosmergon-pov
     }
     else
     {
@@ -715,8 +726,20 @@ void R_ExecuteSetViewSize (void)
     R_InitTextureMapping ();
     
     // psprite scales
-    pspritescale = FRACUNIT*viewwidth/SCREENWIDTH;
-    pspriteiscale = FRACUNIT*SCREENWIDTH/viewwidth;
+    pspritescale = FRACUNIT*viewwidth/POV_REF_W;
+    pspriteiscale = FRACUNIT*POV_REF_W/viewwidth;
+
+    // cosmergon-pov: the sky's 100 texels above the horizon cover the upper half of the picture
+    // (200 / viewheight texels per row; at 320 x 200 this is FRACUNIT, as upstream's pspriteiscale).
+    pov_sky_iscale = (fixed_t)(((int64_t)FRACUNIT * POV_REF_H) / viewheight);
+
+    // cosmergon-pov: ranges in pixels per world unit. Upstream clamps a wall's scale to 64 px/unit and
+    // ignores things nearer than 4 units, which is right for projection 160. With projection
+    // viewwidth/2 the same ranges are scaled by viewwidth/320, so that nothing computed from a scale
+    // (texture steps, tops and bottoms, a sprite's top) leaves the numeric range it has at 320 x 200
+    // by more than 4 (1280 / 320), and the near clip stays the same angle of view.
+    pov_max_wall_scale = (fixed_t)(((int64_t)64 * FRACUNIT * viewwidth) / POV_REF_W);
+    pov_minz = (fixed_t)(((int64_t)4 * FRACUNIT * viewwidth) / POV_REF_W);
     
     // thing clipping
     for (i=0 ; i<viewwidth ; i++)
@@ -727,7 +750,7 @@ void R_ExecuteSetViewSize (void)
     {
 	dy = ((i-viewheight/2)<<FRACBITS)+FRACUNIT/2;
 	dy = abs(dy);
-	yslope[i] = FixedDiv ( (viewwidth<<detailshift)/2*FRACUNIT, dy);
+	yslope[i] = FixedDiv ( ((viewwidth<<detailshift)*FRACUNIT)/2, dy);
     }
 	
     for (i=0 ; i<viewwidth ; i++)
@@ -743,7 +766,9 @@ void R_ExecuteSetViewSize (void)
 	startmap = ((LIGHTLEVELS-1-i)*2)*NUMCOLORMAPS/LIGHTLEVELS;
 	for (j=0 ; j<MAXLIGHTSCALE ; j++)
 	{
-	    level = startmap - j*SCREENWIDTH/(viewwidth<<detailshift)/DISTMAP;
+	    // cosmergon-pov: j is the scale normalised to the reference width (R_LightIndex), so the
+	    // light of a wall depends on its distance, not on the picture size
+	    level = startmap - j/DISTMAP;
 	    
 	    if (level < 0)
 		level = 0;

@@ -25,6 +25,18 @@ typedef uint32_t pixel_t;
 
 
 extern pixel_t* DG_ScreenBuffer;
+// cosmergon-pov: the picture in DG_ScreenBuffer is DG_OutW x DG_OutH, tightly packed; set by
+// I_FinishUpdate before DG_DrawFrame (RESX x RESY without -pov-control). The buffer holds the
+// largest picture (DG_CAPACITY_X x DG_CAPACITY_Y, which is POV_MAX_W x POV_MAX_H of i_video.h).
+extern int DG_OutW;
+extern int DG_OutH;
+#ifdef POV_VIEW_ONLY
+#define DG_CAPACITY_X 1280
+#define DG_CAPACITY_Y 800
+#else
+#define DG_CAPACITY_X DOOMGENERIC_RESX
+#define DG_CAPACITY_Y DOOMGENERIC_RESY
+#endif
 
 #ifdef __cplusplus
 extern "C" {

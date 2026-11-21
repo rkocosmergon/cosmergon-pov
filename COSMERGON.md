@@ -12,6 +12,7 @@ License: GPL-2.0 (see `LICENSE`, unchanged).
 - `scripts/download-freedoom.sh`: pinned, SHA-256 checked Freedoom download.
 - `tools/ppm2png.py`: PPM to PNG (standard library only).
 - `tests/test_headless.sh`: smoke test.
+- `tests/test_size.py`, `tools/measure_size.py`: picture size (package P5, "Picture size" below).
 - One upstream change: `doomgeneric/i_system.c` skips the zenity error dialog when
   `POV_NO_ERROR_DIALOG` is defined (set in `Makefile.headless`). The message still goes to stderr.
 
@@ -87,10 +88,10 @@ Highwater marks of one run are printed at exit (`headless: highwater ...`).
 
 | Limit | Where (upstream) | Old | New | Derivation | Overflow before | Overflow now |
 |---|---|---|---|---|---|---|
-| `MAXDRAWSEGS` | r_defs.h:51, check r_segs.c:383 | 256 | 9408 | 4704 lines (2*48*49); of each line's two segs at most one faces the viewer, so at most 4704 stored; factor 2 allows one split per seg (the only solid lines are the 192 border segs) | wall silently dropped (wrong picture) | `I_Error` |
-| `MAXVISPLANES` | r_plane.c:45, checks :238 and :374 | 128 | 23424 | `R_Subsector` finds at most 2 planes per subsector (2*2304) plus `R_CheckPlane` duplicates at most 2 per drawseg (2*9408) | `R_FindPlane`: `I_Error`; `R_CheckPlane` (r_plane.c:306): no check, wrote past the array | `I_Error` in both |
-| `MAXOPENINGS` | r_plane.c:52, check :378 | 20480 (`SCREENWIDTH*64`) | 121600 | a screen column is covered by at most 95 lines (47 + 47 inner + 1 border) x2 for rounding of column borders at shared vertices x2 for the top and bottom clip array copied per drawseg: `SCREENWIDTH*380` | checked only at the end of the frame, after writing past the array | `I_Error` before each write (r_segs.c, `POV_NeedOpenings`) |
-| `MAXSEGS` (solidsegs) | r_bsp.c:81 | 32 | 162 | posts are separated by at least one column: at most 160, plus 2 sentinels (`SCREENWIDTH/2 + 2`) | no check, wrote past the array | `I_Error` (r_bsp.c, insertion) |
+| `MAXDRAWSEGS` | r_defs.h:51, check r_segs.c:383 | 256 | 9408 (independent of the picture width) | 4704 lines (2*48*49); of each line's two segs at most one faces the viewer, so at most 4704 stored; factor 2 allows one split per seg (the only solid lines are the 192 border segs) | wall silently dropped (wrong picture) | `I_Error` |
+| `MAXVISPLANES` | r_plane.c:45, checks :238 and :374 | 128 | 23424 (independent of the picture width; each plane now holds two 16 bit rows of 1280 entries, 5.1 kB: the array is 120 MB of address space, only the planes in use are touched) | `R_Subsector` finds at most 2 planes per subsector (2*2304) plus `R_CheckPlane` duplicates at most 2 per drawseg (2*9408) | `R_FindPlane`: `I_Error`; `R_CheckPlane` (r_plane.c:306): no check, wrote past the array | `I_Error` in both |
+| `MAXOPENINGS` | r_plane.c:52, check :378 | 20480 (`SCREENWIDTH*64`) | 486400 (was 121600 for 320 wide) | a screen column is covered by at most 95 lines (47 + 47 inner + 1 border) x2 for rounding of column borders at shared vertices x2 for the top and bottom clip array copied per drawseg: 380 per column, times the widest picture `POV_MAX_W` 1280 (the bound is per column, so it scales with the width and with nothing else) | checked only at the end of the frame, after writing past the array | `I_Error` before each write (r_segs.c, `POV_NeedOpenings`) |
+| `MAXSEGS` (solidsegs) | r_bsp.c:81 | 32 | 642 (was 162) | posts are separated by at least one column: at most `POV_MAX_W/2` = 640, plus 2 sentinels | no check, wrote past the array | `I_Error` (r_bsp.c, insertion) |
 | zone memory | i_system.c:58-59 | 6 MiB | 9 MiB | 6 MiB upstream plus this map's level data, which stays in the zone: 2.29 MiB (vertexes 19208, segs 516096, subsectors 36864, sectors 294912, lines 413952, sides 221184, nodes 119756, blockmap 27656 + links 18432, reject 663552, line lists 73728 bytes; struct sizes from `sizeof` in this build) | `Z_Malloc` ends in `I_Error` | unchanged (`I_Error`); `MIN_RAM` = `DEFAULT_RAM`, so a failed allocation says so |
 | `MAXVISSPRITES` | r_things.h:25, r_things.c:322 | 128 | 256 | one vissprite per thing in view; the control channel (P3) has at most 256 things (ids 0..255), the player is never linked into a sector | extra sprites dropped (quietly) | `I_Error` |
 | `MAXSPECIALCROSS`, `MAXINTERCEPTS` | p_local.h:155,219 | | | no special lines, no shooting, no input | | not reachable |
@@ -99,7 +100,10 @@ Highwater marks of one run are printed at exit (`headless: highwater ...`).
 
 High water of the worst measured views (`tests/test_map_render.sh`, 70 frames each): drawsegs 4474 (checker,
 corner view over the diagonal), visplanes 1152 (same), openings 20593 (same; the old 20480 is too small by
-113), solidsegs 3. Memory in use after 700 frames: 3.3 MB non-purgeable of 9 MiB.
+113), solidsegs 3. Memory in use after 700 frames: 3.3 MB non-purgeable of 9 MiB. At the widest picture
+(1280 x 800, both parities of the checker field, six views, `tests/test_size.py`): drawsegs 4582 of 9408,
+visplanes 1152 of 23424, openings 83635 of 486400, solidsegs 3 of 642 (the openings grow with the width,
+65 per column against the bound of 380).
 
 Other upstream changes in this package: `d_main.c` (`POV_NO_WIPE`), `r_plane.h` (declarations),
 `doomgeneric_headless.c` (prints the high water marks). Each is marked `// cosmergon-pov:`.
@@ -132,6 +136,7 @@ corner; angles in degrees, 0 = east, counter-clockwise.
 | `cam <x> <y> <angle>` | camera; the eye is 41 units above the floor of the cell it stands in | as `thing` |
 | `light <level>` | light level of all sectors | 0..255 |
 | `next [n]` | draw n frames (default 1) with the state reached so far | 1..1,000,000 |
+| `size <w> <h>` | picture size in points for the next frames, shown 1 : 1 (see "Picture size") | w integer 160..1280, h integer 100..800 |
 | `quit` | end | |
 
 A line that is not exactly one of these is rejected as a whole, counted, and changes nothing; the first
@@ -153,7 +158,7 @@ supplies `DG_ControlRead()`.
 ### Headless output
 
 With `-pov-control` the headless build writes every frame (`POV_EVERY` default 1) and has no frame limit.
-A frame is 768 kB: a run with thousands of frames needs `POV_EVERY` or `POV_FRAMES`. On 2026-11-20 two
+A frame is 768 kB (3 MB at 1280 x 800): a run with thousands of frames needs `POV_EVERY` or `POV_FRAMES`. On 2026-11-20 two
 such runs wrote 3.8 GB into a RAM-backed `/tmp` and the machine killed the session; the long test now
 writes every 64th frame.
 
@@ -181,6 +186,7 @@ for both makefiles; `pov_stdin.c` reads the control input for both platform laye
   the start, and shows the last picture again when the window is uncovered or resized.
 - At the end stderr carries frames, work per frame, the slowest frame and the share spent handing
   the picture to the window system.
+- The picture has the size of the window, one point a pixel, and follows a resize ("Picture size").
 
 ### Measured on the device (2026-11-20, 4 cores, 1440 x 900 at 60 Hz, Hyprland 0.56.2, window 640 x 400)
 
@@ -216,18 +222,108 @@ dimming with distance, flat wall textures per kind and direction, floors, a sky,
   IWAD's flat range (so only the six flats of the theme exist) and its `TEXTURE1`/`PNAMES` replace the
   IWAD's textures; the IWAD's `TEXTURE2` is replaced by an empty one.
 - The theme's colours are shown exactly (no gamma table, `pov_gamma_off` in `i_video.c`).
-- Outline pass (`pov_control.c`, `outline_pass`): on the finished 8-bit picture (320 x 200, shown at 2 x),
-  one pixel in the outline colour where two neighbours are different surfaces, on the side of the lower
+- Outline pass (`pov_control.c`, `outline_pass`): on the finished 8-bit picture (its own size, one point a
+  pixel; at the default 320 x 200 shown at 2 x), one point in the outline colour where two neighbours are different surfaces, on the side of the lower
   rank (a surface keeps its area). Sky gradient indices are one class: no lines in the sky. Wall pixels
   carry the id of their wall plane (`pov_wall_id`, `r_segs.c`/`r_draw.c`): collinear cell edges are one
   plane, two planes at different distances get a line even where their colour is equal.
-- Joints (floor tiles, slab seams, hatches) are drawn into the textures with "twin" colour indices; the
-  COLORMAP of the farther light rows maps a twin to its surface colour, so joints vanish with distance
-  (see the header of `tools/make_theme.py`; the theme sets the light level of all sectors).
+- Joints (floor tiles, slab seams, hatches) are drawn into the textures with "twin" colour indices, 1 texel
+  wide; the COLORMAP of the farther light rows maps a twin to its surface colour, so joints vanish with
+  distance (see the header of `tools/make_theme.py`; the theme sets the light level of all sectors). The
+  light of a wall or a thing is looked up with the scale normalised to 320 points (`R_LightIndex`,
+  r_main.h), so it depends on the distance only, at any picture size.
 - Kind `own` (row character `O`): a cell of the viewer's own, same height as `cell`.
 - Sprites (things) are still the IWAD's and are wrong in a theme's palette: samples show no things.
 - Upstream fixes needed by a theme (marked `// cosmergon-pov:`): `p_spec.c` (an animated flat that the
   theme's flat range does not hold made `flattranslation[]` writes land in the zone and corrupt lumps),
   `p_switch.c` (switch textures missing from a theme are skipped).
 - Samples: `python3 tools/theme_samples.py` writes `out/muster/` (nine pictures, the comparison and the
-  overview). Tests: `python3 -m unittest tests.test_theme`.
+  overview); `--size 672x324` the same in that size with the size in every file name, `--fine` writes
+  672 x 324 and 1280 x 640 to `out/muster-fein/`. Tests: `python3 -m unittest tests.test_theme`.
+
+## Picture size (package P5)
+
+The renderer draws in the size of the window, one point a pixel, square points, from 160 x 100 up to
+1280 x 800. Without a choice nothing changes: 320 x 200, shown 2 x as 640 x 400, byte for byte the old
+pictures (checked against the previous build for the three themes and none, with and without things, 7
+views: identical hashes).
+
+    doomgeneric/cosmergon-pov-headless ... -pov-control -pov-size 672x324   # fixed at the start
+    size 672 324                                                            # a control line, any time
+    # the window build (doomgeneric_pov.c) takes the size of its window at the start and after every resize
+
+- **Way:** the arrays of the renderer and `I_VideoBuffer` are sized for 1280 x 800 (`POV_MAX_W/H`, i_video.h);
+  the picture is `pov_view_w x pov_view_h`, tightly packed at the start of the buffer, its row distance
+  is the run time variable `pov_stride` (= its width with `-pov-control`, 320 otherwise; r_draw.c,
+  `R_InitBuffer`). `R_ExecuteSetViewSize` (the way Doom changes its view size) rebuilds the tables on a
+  change, in the next frame. Doom's own user interface keeps `SCREENWIDTH` x `SCREENHEIGHT` = 320 x 200
+  (not reached with `-pov-control`; without the switch the old demo mode runs as before). No memory is
+  asked for per frame: everything is static, sized for the maximum.
+- **Limits of the size:** 160 x 100 .. 1280 x 800. Upper: the arrays and 1 MB of buffer, the highest
+  numbers in the fixed-point arithmetic (below) and 3 MB for a picture; 1280 x 800 is what the device's
+  window can reach with room to spare and keeps the angle table (8192 fine angles, 2048 across the 90
+  degrees) at about one fine angle per point at the picture's edge: wider would be coarser than a point.
+  Lower: 160 x 100 is half of Doom's own, the smallest picture in which a cell is still a block.
+  A size outside is rejected: a `size` line like any bad line (counted, nothing changes), `-pov-size`
+  stops the program with a message, the window does not follow it (says so once on stderr, counts, and
+  SDL stretches the last picture).
+- **Shape and angle:** the horizontal angle stays 90 degrees (`FIELDOFVIEW`), the vertical one is what the
+  shape gives. Doom's projection already uses one scale for both directions (`FixedMul(world, rw_scale)`
+  and `centerxfrac`), so the points are square; there is no 1.2 factor in the renderer (it lived only in
+  the CRT's screen). `tests/test_size.py` measures it: a cell of 128 x 128 x 128 units seen straight on
+  from 256 and 384 units has the same width and height in points (within 2) in 7 shapes (672 x 324,
+  1280 x 640, 1280 x 800, 200 x 800, 160 x 100, 320 x 200, 900 x 300) and the expected position (eye line
+  at row h / 2). An odd width is covered to its last column (`centerxfrac` is half the width in 16.16;
+  upstream cut it to a whole number and left the last column undrawn: found by comparing a size change
+  against a fresh run). An odd height puts the horizon half a point above the middle.
+- **What follows the size in the renderer** (every change marked `// cosmergon-pov:` and equal to upstream
+  at 320 x 200):
+  - visplane rows are 16 bit (`top`/`bottom`, empty = `POV_VP_EMPTY` 0xffff; upstream byte, 0..254, too
+    small for 800 rows);
+  - the largest scale of a wall (upstream 64 points a unit) and the nearest thing (upstream 4 units)
+    scale with `viewwidth / 320` (`pov_max_wall_scale`, `pov_minz`), so the fixed-point numbers derived from
+    a scale (tops and bottoms, texture steps, a sprite's top) stay in the range they have at 320;
+  - the light: a wall's or thing's light index uses the scale normalised to 320 (`R_LightIndex`), the
+    floor's light uses 320 / 2 in `R_InitLightTables`: light by distance, whatever the size;
+  - the sky: its 100 rows above the horizon always cover the upper half of the picture
+    (`pov_sky_iscale` = 200 / viewheight texels a row; upstream `pspriteiscale` follows the width, and in
+    a tall picture the sky would run out and tile). The sky texture is 1024 x 128 and is enlarged by the
+    picture: the sun is an ellipse of width : height = (w / 256) : (h / 200), 1.25 at 1280 x 800 and 1.6 at
+    672 x 324, and its edge shows the steps of the texture;
+  - spans wider than 320 points use `R_DrawSpanFine` (full 16.16 position): the old 6.10 bit step is
+    cut to 1/1024 texel, which over 1280 points drifts a texel or more (about 12 points of a floor joint at
+    the bottom edge);
+  - range checks of the column and span drawers are against the picture, not the buffer.
+- **Outline:** 1 point from 160 to 900 wide, 2 points above (`POV_OUTLINE_WIDE_FROM` 901): looked at in
+  `out/muster-fein`, 1 point is delicate at 1280 (0.16 percent of the height) and the same weight as the
+  old line at 672 x 324 (0.31 percent); 2 points at 1280 x 640 have it. The second point grows into the
+  surface the first one lies in (same class), so the line stays outside the faces.
+- **Themes:** joints are 1 texel; they vanish at 1280 / (q + 1) units (`FOLD_Q`: floor 7 = 160 units, walls
+  3 = 320). A 1 texel line across the view (a floor joint) is thinner than one row beyond
+  sqrt(eye height * w / 2) units (41 units: 117 at 672 wide); beyond that it breaks into dashes
+  (looked at: fold 213 shows dashes at 672, 160 is clean). Wall seams are wider than a point up to
+  w / 2 units. With the old 2 texel joints at 320 and a theme made by this generator, the joints are
+  thin there; the default size without a theme is unchanged.
+
+### Measured (`python3 tools/measure_size.py`, 400 pictures, 3 runs, this machine, ms per picture
+without writing it: control lines, renderer, outline, conversion to RGB)
+
+| Size | Theme | Mean | Slowest |
+|---|---|---|---|
+| 320 x 200 (default, shown 640 x 400) | none | 0.54 | 2.19 |
+| 320 x 200 | wueste | 1.13 | 3.08 |
+| 672 x 324 | none | 1.13 | 3.25 |
+| 672 x 324 | wueste | 2.99 | 5.65 |
+| 1280 x 800 | none | 4.40 | 7.64 |
+| 1280 x 800 | wueste | 13.80 | 25.11 |
+
+The step at 35 a second is 28.6 ms. Memory: 134 MB of address space (the visplane array), 22 MB resident
+at 1280 x 800.
+
+### Tests
+
+    python3 -m unittest tests.test_size      # option, `size` line, aspect, limits at 1280 x 800, loud overflow
+    POV_SANITIZED=1 POV_BIN=$PWD/doomgeneric/cosmergon-pov-headless-sanitize python3 -m unittest tests.test_size
+
+The window build is not tested here (SDL2 was not installed; the file passes `gcc -fsyntax-only` against a
+stub of the SDL2 declarations it uses and has not run).

@@ -20,6 +20,8 @@
 #ifndef __R_MAIN__
 #define __R_MAIN__
 
+#include <stdint.h>
+
 #include "d_player.h"
 #include "r_data.h"
 
@@ -44,6 +46,12 @@ extern fixed_t		centerxfrac;
 extern fixed_t		centeryfrac;
 extern fixed_t		projection;
 
+// cosmergon-pov (r_main.c, R_ExecuteSetViewSize): sky scale, the largest wall scale and the nearest
+// distance of a thing, all following the picture size.
+extern fixed_t		pov_sky_iscale;
+extern fixed_t		pov_max_wall_scale;
+extern fixed_t		pov_minz;
+
 extern int		validcount;
 
 extern int		linecount;
@@ -65,6 +73,17 @@ extern int		loopcount;
 #define LIGHTSCALESHIFT		12
 #define MAXLIGHTZ	       128
 #define LIGHTZSHIFT		20
+
+// cosmergon-pov: index into scalelight for a scale (pixels per unit, 16.16) given as `shift`
+// (LIGHTSCALESHIFT or one less for sprites). The scale is first normalised to the reference width
+// (320), so that a wall at a given distance gets the same light in a 1280 picture as in a 320 one.
+// At 320 the factor is exactly 1: the result is upstream's `scale >> shift`.
+extern int		viewwidth;		// r_draw.c
+
+static inline int R_LightIndex(fixed_t scale, int shift)
+{
+    return (int)(((int64_t)scale * POV_REF_W / viewwidth) >> shift);
+}
 
 extern lighttable_t*	scalelight[LIGHTLEVELS][MAXLIGHTSCALE];
 extern lighttable_t*	scalelightfixed[MAXLIGHTSCALE];

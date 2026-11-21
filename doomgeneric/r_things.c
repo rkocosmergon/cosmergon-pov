@@ -41,7 +41,7 @@
 
 
 
-#define MINZ				(FRACUNIT*4)
+// cosmergon-pov: MINZ follows the picture width (pov_minz, r_main.c): FRACUNIT*4 at 320 wide
 #define BASEYCENTER			100
 
 //void R_DrawColumn (void);
@@ -76,8 +76,8 @@ lighttable_t**	spritelights;
 
 // constant arrays
 //  used for psprite clipping and initializing clipping
-short		negonearray[SCREENWIDTH];
-short		screenheightarray[SCREENWIDTH];
+short		negonearray[POV_MAX_W];
+short		screenheightarray[POV_MAX_W];
 
 
 //
@@ -296,7 +296,7 @@ void R_InitSprites (char** namelist)
 {
     int		i;
 	
-    for (i=0 ; i<SCREENWIDTH ; i++)
+    for (i=0 ; i<POV_MAX_W ; i++)
     {
 	negonearray[i] = -1;
     }
@@ -494,7 +494,7 @@ void R_ProjectSprite (mobj_t* thing)
     tz = gxt-gyt; 
 
     // thing is behind view plane?
-    if (tz < MINZ)
+    if (tz < pov_minz)
 	return;
     
     xscale = FixedDiv(projection, tz);
@@ -601,7 +601,7 @@ void R_ProjectSprite (mobj_t* thing)
     else
     {
 	// diminished light
-	index = xscale>>(LIGHTSCALESHIFT-detailshift);
+	index = R_LightIndex(xscale, LIGHTSCALESHIFT-detailshift);
 
 	if (index >= MAXLIGHTSCALE) 
 	    index = MAXLIGHTSCALE-1;
@@ -847,8 +847,8 @@ void R_SortVisSprites (void)
 //
 // R_DrawSprite
 //
-static short		clipbot[SCREENWIDTH];
-static short		cliptop[SCREENWIDTH];
+static short		clipbot[POV_MAX_W];
+static short		cliptop[POV_MAX_W];
 void R_DrawSprite (vissprite_t* spr)
 {
     drawseg_t*		ds;

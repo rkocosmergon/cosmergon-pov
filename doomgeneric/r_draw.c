@@ -21,6 +21,8 @@
 
 
 
+#include <stdint.h>
+
 #include "doomdef.h"
 #include "deh_main.h"
 
@@ -36,10 +38,13 @@
 // State.
 #include "doomstat.h"
 
+#include "pov_control.h"	// cosmergon-pov: POV_ControlEnabled
+
 
 // ?
-#define MAXWIDTH			1120
-#define MAXHEIGHT			832
+// cosmergon-pov: the look-up tables hold the largest picture (upstream 1120 x 832)
+#define MAXWIDTH			POV_MAX_W
+#define MAXHEIGHT			POV_MAX_H
 
 // status bar height at bottom of screen
 #define SBARHEIGHT		32
@@ -61,6 +66,8 @@ int		viewheight;
 int		viewwindowx;
 int		viewwindowy; 
 byte*		ylookup[MAXHEIGHT]; 
+// cosmergon-pov: bytes between two rows of the picture (set by R_InitBuffer)
+int		pov_stride = SCREENWIDTH;
 int		columnofs[MAXWIDTH]; 
 
 // Color tables for different players,
@@ -111,6 +118,7 @@ void R_DrawColumn (void)
     fixed_t		frac;
     fixed_t		fracstep;	 
     unsigned short *idp = NULL;
+    const int		stride = pov_stride;
  
     count = dc_yh - dc_yl; 
 
@@ -119,9 +127,10 @@ void R_DrawColumn (void)
 	return; 
 				 
 #ifdef RANGECHECK 
-    if ((unsigned)dc_x >= SCREENWIDTH
+    // cosmergon-pov: against the picture, not the buffer (upstream: the same, both 320 x 200)
+    if ((unsigned)dc_x >= (unsigned)viewwidth
 	|| dc_yl < 0
-	|| dc_yh >= SCREENHEIGHT) 
+	|| dc_yh >= viewheight) 
 	I_Error ("R_DrawColumn: %i to %i at %i", dc_yl, dc_yh, dc_x); 
 #endif 
 
@@ -150,10 +159,10 @@ void R_DrawColumn (void)
 	if (idp != NULL)
 	{
 	    *idp = pov_wall_id;
-	    idp += SCREENWIDTH;
+	    idp += stride;
 	}
 	
-	dest += SCREENWIDTH; 
+	dest += pov_stride; 
 	frac += fracstep;
 	
     } while (count--); 
@@ -236,9 +245,9 @@ void R_DrawColumnLow (void)
 	return; 
 				 
 #ifdef RANGECHECK 
-    if ((unsigned)dc_x >= SCREENWIDTH
+    if ((unsigned)dc_x >= (unsigned)viewwidth
 	|| dc_yl < 0
-	|| dc_yh >= SCREENHEIGHT)
+	|| dc_yh >= viewheight)
     {
 	
 	I_Error ("R_DrawColumn: %i to %i at %i", dc_yl, dc_yh, dc_x);
@@ -258,8 +267,8 @@ void R_DrawColumnLow (void)
     {
 	// Hack. Does not work corretly.
 	*dest2 = *dest = dc_colormap[dc_source[(frac>>FRACBITS)&127]];
-	dest += SCREENWIDTH;
-	dest2 += SCREENWIDTH;
+	dest += pov_stride;
+	dest2 += pov_stride;
 	frac += fracstep; 
 
     } while (count--);
@@ -270,7 +279,8 @@ void R_DrawColumnLow (void)
 // Spectre/Invisibility.
 //
 #define FUZZTABLE		50 
-#define FUZZOFF	(SCREENWIDTH)
+// cosmergon-pov: a row up or down, in rows (times pov_stride at the use)
+#define FUZZOFF	(1)
 
 
 int	fuzzoffset[FUZZTABLE] =
@@ -317,8 +327,8 @@ void R_DrawFuzzColumn (void)
 	return; 
 
 #ifdef RANGECHECK 
-    if ((unsigned)dc_x >= SCREENWIDTH
-	|| dc_yl < 0 || dc_yh >= SCREENHEIGHT)
+    if ((unsigned)dc_x >= (unsigned)viewwidth
+	|| dc_yl < 0 || dc_yh >= viewheight)
     {
 	I_Error ("R_DrawFuzzColumn: %i to %i at %i",
 		 dc_yl, dc_yh, dc_x);
@@ -340,13 +350,13 @@ void R_DrawFuzzColumn (void)
 	//  a pixel that is either one column
 	//  left or right of the current one.
 	// Add index from colormap to index.
-	*dest = colormaps[6*256+dest[fuzzoffset[fuzzpos]]]; 
+	*dest = colormaps[6*256+dest[fuzzoffset[fuzzpos]*pov_stride]]; 
 
 	// Clamp table lookup index.
 	if (++fuzzpos == FUZZTABLE) 
 	    fuzzpos = 0;
 	
-	dest += SCREENWIDTH;
+	dest += pov_stride;
 
 	frac += fracstep; 
     } while (count--); 
@@ -382,8 +392,8 @@ void R_DrawFuzzColumnLow (void)
     x = dc_x << 1;
     
 #ifdef RANGECHECK 
-    if ((unsigned)x >= SCREENWIDTH
-	|| dc_yl < 0 || dc_yh >= SCREENHEIGHT)
+    if ((unsigned)x >= (unsigned)(viewwidth<<detailshift)
+	|| dc_yl < 0 || dc_yh >= viewheight)
     {
 	I_Error ("R_DrawFuzzColumn: %i to %i at %i",
 		 dc_yl, dc_yh, dc_x);
@@ -406,15 +416,15 @@ void R_DrawFuzzColumnLow (void)
 	//  a pixel that is either one column
 	//  left or right of the current one.
 	// Add index from colormap to index.
-	*dest = colormaps[6*256+dest[fuzzoffset[fuzzpos]]]; 
-	*dest2 = colormaps[6*256+dest2[fuzzoffset[fuzzpos]]]; 
+	*dest = colormaps[6*256+dest[fuzzoffset[fuzzpos]*pov_stride]]; 
+	*dest2 = colormaps[6*256+dest2[fuzzoffset[fuzzpos]*pov_stride]]; 
 
 	// Clamp table lookup index.
 	if (++fuzzpos == FUZZTABLE) 
 	    fuzzpos = 0;
 	
-	dest += SCREENWIDTH;
-	dest2 += SCREENWIDTH;
+	dest += pov_stride;
+	dest2 += pov_stride;
 
 	frac += fracstep; 
     } while (count--); 
@@ -448,9 +458,9 @@ void R_DrawTranslatedColumn (void)
 	return; 
 				 
 #ifdef RANGECHECK 
-    if ((unsigned)dc_x >= SCREENWIDTH
+    if ((unsigned)dc_x >= (unsigned)viewwidth
 	|| dc_yl < 0
-	|| dc_yh >= SCREENHEIGHT)
+	|| dc_yh >= viewheight)
     {
 	I_Error ( "R_DrawColumn: %i to %i at %i",
 		  dc_yl, dc_yh, dc_x);
@@ -474,7 +484,7 @@ void R_DrawTranslatedColumn (void)
 	// Thus the "green" ramp of the player 0 sprite
 	//  is mapped to gray, red, black/indigo. 
 	*dest = dc_colormap[dc_translation[dc_source[frac>>FRACBITS]]];
-	dest += SCREENWIDTH;
+	dest += pov_stride;
 	
 	frac += fracstep; 
     } while (count--); 
@@ -497,9 +507,9 @@ void R_DrawTranslatedColumnLow (void)
     x = dc_x << 1;
 				 
 #ifdef RANGECHECK 
-    if ((unsigned)x >= SCREENWIDTH
+    if ((unsigned)x >= (unsigned)(viewwidth<<detailshift)
 	|| dc_yl < 0
-	|| dc_yh >= SCREENHEIGHT)
+	|| dc_yh >= viewheight)
     {
 	I_Error ( "R_DrawColumn: %i to %i at %i",
 		  dc_yl, dc_yh, x);
@@ -525,8 +535,8 @@ void R_DrawTranslatedColumnLow (void)
 	//  is mapped to gray, red, black/indigo. 
 	*dest = dc_colormap[dc_translation[dc_source[frac>>FRACBITS]]];
 	*dest2 = dc_colormap[dc_translation[dc_source[frac>>FRACBITS]]];
-	dest += SCREENWIDTH;
-	dest2 += SCREENWIDTH;
+	dest += pov_stride;
+	dest2 += pov_stride;
 	
 	frac += fracstep; 
     } while (count--); 
@@ -613,8 +623,8 @@ void R_DrawSpan (void)
 #ifdef RANGECHECK
     if (ds_x2 < ds_x1
 	|| ds_x1<0
-	|| ds_x2>=SCREENWIDTH
-	|| (unsigned)ds_y>SCREENHEIGHT)
+	|| ds_x2>=viewwidth
+	|| (unsigned)ds_y>=(unsigned)viewheight)
     {
 	I_Error( "R_DrawSpan: %i to %i at %i",
 		 ds_x1,ds_x2,ds_y);
@@ -729,6 +739,47 @@ void R_DrawSpan (void)
 
 
 //
+// cosmergon-pov: R_DrawSpan keeps the position and the step of the texture in two 16 bit fields of
+// 6.10 bits each. The step is cut to 1/1024 texel; over a 1280 point wide span that adds up to more
+// than a texel (about 12 points of a floor joint near the bottom edge). Above the reference width
+// the position is carried at full 16.16 instead (R_ExecuteSetViewSize chooses); up to 320 points the
+// original is used, so that the default picture stays byte for byte.
+//
+void R_DrawSpanFine (void)
+{
+    uint32_t xfrac = (uint32_t)ds_xfrac;
+    uint32_t yfrac = (uint32_t)ds_yfrac;
+    uint32_t xstep = (uint32_t)ds_xstep;
+    uint32_t ystep = (uint32_t)ds_ystep;
+    byte *dest;
+    int count;
+
+#ifdef RANGECHECK
+    if (ds_x2 < ds_x1
+	|| ds_x1<0
+	|| ds_x2>=viewwidth
+	|| (unsigned)ds_y>=(unsigned)viewheight)
+    {
+	I_Error( "R_DrawSpanFine: %i to %i at %i",
+		 ds_x1,ds_x2,ds_y);
+    }
+#endif
+
+    dest = ylookup[ds_y] + columnofs[ds_x1];
+    count = ds_x2 - ds_x1;
+
+    do
+    {
+	int spot = (int)(((yfrac >> 10) & 4032) | ((xfrac >> 16) & 63));
+
+	*dest++ = ds_colormap[ds_source[spot]];
+	xfrac += xstep;
+	yfrac += ystep;
+    } while (count--);
+}
+
+
+//
 // Again..
 //
 void R_DrawSpanLow (void)
@@ -742,8 +793,8 @@ void R_DrawSpanLow (void)
 #ifdef RANGECHECK
     if (ds_x2 < ds_x1
 	|| ds_x1<0
-	|| ds_x2>=SCREENWIDTH
-	|| (unsigned)ds_y>SCREENHEIGHT)
+	|| ds_x2>=viewwidth
+	|| (unsigned)ds_y>=(unsigned)viewheight)
     {
 	I_Error( "R_DrawSpan: %i to %i at %i",
 		 ds_x1,ds_x2,ds_y);
@@ -798,21 +849,43 @@ R_InitBuffer
     // Handle resize,
     //  e.g. smaller view windows
     //  with border and/or status bar.
-    viewwindowx = (SCREENWIDTH-width) >> 1; 
+#ifdef POV_VIEW_ONLY
+    if (POV_ControlEnabled())
+    {
+	// cosmergon-pov: with -pov-control the picture has the buffer to itself, tightly packed
+	// (stride = its width), in the top left corner; the platform layer takes it from there.
+	if (width > POV_MAX_W || height > POV_MAX_H)
+	    I_Error ("R_InitBuffer: picture %i x %i larger than the limit %i x %i",
+		     width, height, POV_MAX_W, POV_MAX_H);
+	pov_stride = width;
+	viewwindowx = 0;
+	viewwindowy = 0;
+    }
+    else
+#endif
+    {
+	pov_stride = SCREENWIDTH;
+	viewwindowx = (SCREENWIDTH-width) >> 1; 
+    }
 
     // Column offset. For windows.
     for (i=0 ; i<width ; i++) 
 	columnofs[i] = viewwindowx + i;
 
-    // Samw with base row offset.
-    if (width == SCREENWIDTH) 
-	viewwindowy = 0; 
-    else 
-	viewwindowy = (SCREENHEIGHT-SBARHEIGHT-height) >> 1; 
+#ifdef POV_VIEW_ONLY
+    if (!POV_ControlEnabled())
+#endif
+    {
+	// Samw with base row offset.
+	if (width == SCREENWIDTH) 
+	    viewwindowy = 0; 
+	else 
+	    viewwindowy = (SCREENHEIGHT-SBARHEIGHT-height) >> 1; 
+    }
 
     // Preclaculate all row offsets.
     for (i=0 ; i<height ; i++) 
-	ylookup[i] = I_VideoBuffer + (i+viewwindowy)*SCREENWIDTH; 
+	ylookup[i] = I_VideoBuffer + (i+viewwindowy)*pov_stride; 
 } 
  
  

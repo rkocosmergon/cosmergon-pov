@@ -59,15 +59,15 @@ short*			lastopening;
 //  floorclip starts out SCREENHEIGHT
 //  ceilingclip starts out -1
 //
-short			floorclip[SCREENWIDTH];
-short			ceilingclip[SCREENWIDTH];
+short			floorclip[POV_MAX_W];
+short			ceilingclip[POV_MAX_W];
 
 //
 // spanstart holds the start of a plane span
 // initialized to 0 at start
 //
-int			spanstart[SCREENHEIGHT];
-int			spanstop[SCREENHEIGHT];
+int			spanstart[POV_MAX_H];
+int			spanstop[POV_MAX_H];
 
 //
 // texture mapping
@@ -75,15 +75,15 @@ int			spanstop[SCREENHEIGHT];
 lighttable_t**		planezlight;
 fixed_t			planeheight;
 
-fixed_t			yslope[SCREENHEIGHT];
-fixed_t			distscale[SCREENWIDTH];
+fixed_t			yslope[POV_MAX_H];
+fixed_t			distscale[POV_MAX_W];
 fixed_t			basexscale;
 fixed_t			baseyscale;
 
-fixed_t			cachedheight[SCREENHEIGHT];
-fixed_t			cacheddistance[SCREENHEIGHT];
-fixed_t			cachedxstep[SCREENHEIGHT];
-fixed_t			cachedystep[SCREENHEIGHT];
+fixed_t			cachedheight[POV_MAX_H];
+fixed_t			cacheddistance[POV_MAX_H];
+fixed_t			cachedxstep[POV_MAX_H];
+fixed_t			cachedystep[POV_MAX_H];
 
 
 
@@ -243,10 +243,10 @@ R_FindPlane
     check->height = height;
     check->picnum = picnum;
     check->lightlevel = lightlevel;
-    check->minx = SCREENWIDTH;
+    check->minx = POV_MAX_W;
     check->maxx = -1;
     
-    memset (check->top,0xff,sizeof(check->top));
+    memset (check->top,0xff,sizeof(check->top));	// every entry POV_VP_EMPTY (0xffff)
 		
     return check;
 }
@@ -290,7 +290,7 @@ R_CheckPlane
     }
 
     for (x=intrl ; x<= intrh ; x++)
-	if (pl->top[x] != 0xff)
+	if (pl->top[x] != POV_VP_EMPTY)
 	    break;
 
     if (x > intrh)
@@ -315,7 +315,7 @@ R_CheckPlane
     pl->minx = start;
     pl->maxx = stop;
 
-    memset (pl->top,0xff,sizeof(pl->top));
+    memset (pl->top,0xff,sizeof(pl->top));	// every entry POV_VP_EMPTY (0xffff)
 		
     return pl;
 }
@@ -401,7 +401,10 @@ void R_DrawPlanes (void)
 	// sky flat
 	if (pl->picnum == skyflatnum)
 	{
-	    dc_iscale = pspriteiscale>>detailshift;
+	    // cosmergon-pov: the sky's 100 texel above the horizon always cover the upper half of the
+	    // picture, whatever its height (pov_sky_iscale, r_main.c); upstream used pspriteiscale, which
+	    // follows the WIDTH and would let the sky run out (tile) in a tall picture.
+	    dc_iscale = pov_sky_iscale;
 	    
 	    // Sky is allways drawn full bright,
 	    //  i.e. colormaps[0] is used.
@@ -441,8 +444,8 @@ void R_DrawPlanes (void)
 
 	planezlight = zlight[light];
 
-	pl->top[pl->maxx+1] = 0xff;
-	pl->top[pl->minx-1] = 0xff;
+	pl->top[pl->maxx+1] = POV_VP_EMPTY;
+	pl->top[pl->minx-1] = POV_VP_EMPTY;
 		
 	stop = pl->maxx + 1;
 

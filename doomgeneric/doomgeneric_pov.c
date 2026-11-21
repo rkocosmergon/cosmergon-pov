@@ -1,12 +1,17 @@
 // cosmergon-pov: the window (SDL2). It only shows what the control channel says
 // (pov_control.h, COSMERGON.md): no keyboard, no mouse, no sound, no dialog.
 //
+// The engine draws in the size of the window itself, one point per pixel (COSMERGON.md, "Picture
+// size"): at the start and after every resize (SDL window event) the renderer's output size is
+// handed to POV_ControlRequestSize. A size outside 160 x 100 .. 1280 x 800 is not followed (said once
+// on stderr, counted): the last picture stays and is stretched by SDL to the window.
+//
 // Always started with -pov-control; the control input is read without blocking, POV_FPS steps
 // a second (default 35, Doom's own rate), and a step draws only when something changed.
 //
 // Environment:
 //   POV_FPS      steps a second, 1..120 (default 35)
-//   POV_WIDTH, POV_HEIGHT   first size of the window in pixels (default 640 x 400)
+//   POV_WIDTH, POV_HEIGHT   first size of the window in pixels (default 640 x 400; at most 1280 x 800)
 //   POV_SOFTWARE  set: SDL's software renderer instead of the accelerated one (for measuring)
 //
 // At the end stderr carries the measures of the run (frames, time per frame without the
@@ -32,6 +37,11 @@ static SDL_Renderer *s_renderer = NULL;
 static SDL_Texture *s_texture = NULL;
 static volatile sig_atomic_t s_stop = 0;
 static int s_uncovered = 0;             // the window system asks for the picture again
+static int s_resized = 0;               // the window's size may have changed
+static int s_tex_w = 0, s_tex_h = 0;    // size of s_texture
+static unsigned long s_size_followed = 0;
+static unsigned long s_size_rejected = 0;
+static int s_last_rejected_w = 0, s_last_rejected_h = 0;
 
 static unsigned long s_frames = 0;
 static uint64_t s_work_ticks = 0;       // performance counter ticks spent in steps (without the pause)
@@ -71,10 +81,37 @@ static void die(const char *what)
     exit(1);
 }
 
+// Hands the window's size in pixels (the renderer's output, so a scaled display counts in real
+// pixels) to the engine. Called at the start and after a resize event.
+static void follow_window(void)
+{
+    int w = 0, h = 0;
+
+    s_resized = 0;
+    if (SDL_GetRendererOutputSize(s_renderer, &w, &h) != 0)
+    {
+        die("SDL_GetRendererOutputSize");
+    }
+    if (POV_ControlRequestSize(w, h))
+    {
+        s_size_followed++;
+        return;
+    }
+    s_size_rejected++;
+    if (w != s_last_rejected_w || h != s_last_rejected_h)
+    {
+        s_last_rejected_w = w;
+        s_last_rejected_h = h;
+        fprintf(stderr, "pov: window %d x %d is outside %d x %d .. %d x %d, not followed "
+                "(the last picture is stretched to the window)\n",
+                w, h, POV_MIN_W, POV_MIN_H, POV_MAX_W, POV_MAX_H);
+    }
+}
+
 void DG_Init(void)
 {
-    int width = (int)env_long("POV_WIDTH", DOOMGENERIC_RESX, 64, 8192);
-    int height = (int)env_long("POV_HEIGHT", DOOMGENERIC_RESY, 40, 8192);
+    int width = (int)env_long("POV_WIDTH", 640, POV_MIN_W, POV_MAX_W);
+    int height = (int)env_long("POV_HEIGHT", 400, POV_MIN_H, POV_MAX_H);
 
     // The window's identity for the compositor's rules. Wayland takes it from the app id,
     // X11 from the class; older SDL2 reads the environment, newer ones the hint.
@@ -106,17 +143,13 @@ void DG_Init(void)
     {
         die("SDL_CreateRenderer");
     }
-    s_texture = SDL_CreateTexture(s_renderer, SDL_PIXELFORMAT_RGB888, SDL_TEXTUREACCESS_STREAMING,
-                                  DOOMGENERIC_RESX, DOOMGENERIC_RESY);
-    if (s_texture == NULL)
-    {
-        die("SDL_CreateTexture");
-    }
+    // the texture is made in DG_DrawFrame, in the size of the picture
     SDL_ShowCursor(SDL_DISABLE);
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
     signal(SIGPIPE, SIG_IGN);
     POV_ControlSetLive(1);
+    follow_window();
 }
 
 static void show(void)
@@ -130,7 +163,23 @@ void DG_DrawFrame(void)
 {
     uint64_t before = SDL_GetPerformanceCounter();
 
-    SDL_UpdateTexture(s_texture, NULL, DG_ScreenBuffer, DOOMGENERIC_RESX * (int)sizeof(uint32_t));
+    if (s_texture == NULL || s_tex_w != DG_OutW || s_tex_h != DG_OutH)
+    {
+        // new size of the picture: a new texture of exactly that size (not per frame)
+        if (s_texture != NULL)
+        {
+            SDL_DestroyTexture(s_texture);
+        }
+        s_texture = SDL_CreateTexture(s_renderer, SDL_PIXELFORMAT_RGB888, SDL_TEXTUREACCESS_STREAMING,
+                                      DG_OutW, DG_OutH);
+        if (s_texture == NULL)
+        {
+            die("SDL_CreateTexture");
+        }
+        s_tex_w = DG_OutW;
+        s_tex_h = DG_OutH;
+    }
+    SDL_UpdateTexture(s_texture, NULL, DG_ScreenBuffer, DG_OutW * (int)sizeof(uint32_t));
     show();
     s_uncovered = 0;
     s_show_ticks += SDL_GetPerformanceCounter() - before;
@@ -173,6 +222,8 @@ static void finish(void)
     fprintf(stderr, "pov: show_ms_per_frame=%.3f (part of the work)\n",
             s_frames > 0 ? (double)s_show_ticks * per_ms / (double)s_frames : 0.0);
     fprintf(stderr, "pov: video=%s renderer=%s\n", SDL_GetCurrentVideoDriver(), info.name ? info.name : "?");
+    fprintf(stderr, "pov: picture size %d x %d, window sizes followed=%lu not followed=%lu\n",
+            DG_OutW, DG_OutH, s_size_followed, s_size_rejected);
     POV_ControlSummary(stderr);
     SDL_Quit();
     exit(0);
@@ -193,6 +244,10 @@ static void drain_events(void)
                      || event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED))
         {
             s_uncovered = 1;
+            if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
+            {
+                s_resized = 1;
+            }
         }
     }
 }
@@ -243,6 +298,11 @@ int main(int argc, char **argv)
 
     for (i = 1; i < argc; i++)
     {
+        if (strcmp(argv[i], "-pov-size") == 0)
+        {
+            fprintf(stderr, "pov: -pov-size is for the build without a window; this one follows its window\n");
+            return 2;
+        }
         control = control || strcmp(argv[i], "-pov-control") == 0;
         iwad = iwad || strcmp(argv[i], "-iwad") == 0;
     }
@@ -269,6 +329,10 @@ int main(int argc, char **argv)
         if (s_stop || POV_ControlDone())
         {
             finish();
+        }
+        if (s_resized)
+        {
+            follow_window();        // the next tick draws in the new size (the request marks it changed)
         }
         before = SDL_GetPerformanceCounter();
         doomgeneric_Tick();

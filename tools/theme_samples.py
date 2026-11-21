@@ -4,12 +4,18 @@ muster-heute-1.png (no theme) and the overview uebersicht.png. Standard library 
 
     make -C doomgeneric -f Makefile.headless
     python3 tools/make_map.py                      # assets/cosmergon.wad (once)
-    python3 tools/theme_samples.py [--out out/muster]
+    python3 tools/theme_samples.py [--out out/muster] [--size 672x324]
+    python3 tools/theme_samples.py --fine          # out/muster-fein: 672x324 and 1280x640
 
 The scene is sent over the control channel (cells, no things: the sprites are still the IWAD's and
 would be wrong in a theme's palette). Three viewpoints: 1 eye level on open ground, 2 along the
 wall with a tower, 3 standing on a block (eye 169 units), looking over the field.
-The frames are written as PPM next to the PNG files and removed again (768 kB each).
+The frames are written as PPM next to the PNG files and removed again (768 kB each at the default
+size, 2.4 MB at 1280 x 640; the twelve of one run exist together).
+
+Without --size the engine draws its default (320 x 200, shown at 640 x 400) and the files are
+named as before. With --size <w>x<h> the engine draws exactly that many points (-pov-size, one point
+a pixel) and the size is part of every file name: muster-A-1-672x324.png, uebersicht-672x324.png.
 """
 
 from __future__ import annotations
@@ -95,13 +101,15 @@ def control_lines() -> list[str]:
     return lines
 
 
-def run_engine(theme_wad: str | None, work: str) -> list[str]:
+def run_engine(theme_wad: str | None, work: str, size: str | None = None) -> list[str]:
     binary = os.path.join(ROOT, "doomgeneric", "cosmergon-pov-headless")
     cmd = [binary, "-iwad", os.path.join(ROOT, "assets", "freedoom", "freedoom1.wad"),
            "-file", os.path.join(ROOT, "assets", "cosmergon.wad")]
     if theme_wad:
         cmd += ["-pov-theme", theme_wad]
     cmd += ["-pov-control", "-warp", "1", "1"]
+    if size:
+        cmd += ["-pov-size", size]
     os.makedirs(work, exist_ok=True)
     env = dict(os.environ, POV_OUT=work)
     proc = subprocess.run(cmd, input="\n".join(control_lines()) + "\n", text=True, env=env,
@@ -132,12 +140,10 @@ def sheet(ppms: list[list[str]], out_png: str, gap: int = 12) -> None:
     ppm2png.write_png(out_png, total_w, total_h, b"".join(bytes(row) for row in canvas))
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--out", default=os.path.join(ROOT, "out", "muster"))
-    args = ap.parse_args()
-    out = os.path.abspath(args.out)
+def write_all(out: str, size: str | None) -> None:
+    """The nine theme pictures, the comparison and the overview, in `size` (None: the default)."""
     work = os.path.join(out, "_ppm")
+    suffix = "-" + size if size else ""
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(out, exist_ok=True)
     try:
@@ -146,18 +152,33 @@ def main() -> int:
             wad = os.path.join(out, "_theme-%s.wad" % name)
             with open(wad, "wb") as handle:
                 handle.write(make_theme.wad_bytes(make_theme.build_theme(name)))
-            ppms = run_engine(wad, os.path.join(work, name))
+            ppms = run_engine(wad, os.path.join(work, name), size)
             os.remove(wad)
             for i, ppm in enumerate(ppms, 1):
                 w, h, pix = ppm2png.read_ppm(ppm)
-                ppm2png.write_png(os.path.join(out, "muster-%s-%d.png" % (letter, i)), w, h, pix)
+                ppm2png.write_png(os.path.join(out, "muster-%s-%d%s.png" % (letter, i, suffix)), w, h, pix)
             columns.append(ppms)
-        today = run_engine(None, os.path.join(work, "heute"))
+        today = run_engine(None, os.path.join(work, "heute"), size)
         w, h, pix = ppm2png.read_ppm(today[0])
-        ppm2png.write_png(os.path.join(out, "muster-heute-1.png"), w, h, pix)
-        sheet(columns, os.path.join(out, "uebersicht.png"))
+        ppm2png.write_png(os.path.join(out, "muster-heute-1%s.png" % suffix), w, h, pix)
+        sheet(columns, os.path.join(out, "uebersicht%s.png" % suffix))
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--size", help="<width>x<height> in points (default: the engine's 320 x 200 shown at 640 x 400)")
+    ap.add_argument("--fine", action="store_true", help="672x324 and 1280x640 into out/muster-fein")
+    args = ap.parse_args()
+    if args.fine:
+        out = os.path.abspath(args.out or os.path.join(ROOT, "out", "muster-fein"))
+        for size in ("672x324", "1280x640"):
+            write_all(out, size)
+    else:
+        out = os.path.abspath(args.out or os.path.join(ROOT, "out", "muster"))
+        write_all(out, args.size)
     print("wrote", out)
     return 0
 

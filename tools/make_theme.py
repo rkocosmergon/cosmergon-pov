@@ -26,8 +26,15 @@ Joints are drawn into the textures with "twin" indices (navy). The engine picks 
 from the distance; with the light level LIGHT a surface starts at row S (floors S, walls whose
 edge runs along y: S - 4, along x: S + 4, r_segs.c) and the row is S - 1280 / distance (r_draw,
 r_plane, r_main light tables). From row S - FOLD_Q on, a twin maps to the colour of its surface:
-the joints are drawn up to 1280 / (FOLD_Q + 1) units and vanish beyond. A joint 2 texels wide
-is drawn as a solid line up to about that distance; thinner ones break up into dots (measured).
+the joints are drawn up to 1280 / (FOLD_Q + 1) units and vanish beyond.
+
+Joints are 1 texel wide (the picture is drawn at the window's own size, one point a pixel; before it was
+320 x 200 shown twice as large, with 2 texel joints). A joint across the view (a floor joint) is thinner
+than one picture row beyond sqrt(eye height * w / 2) units and then breaks into dashes: 117 units at 672
+points wide, 162 at 1280. So the floor folds at 160 units (FOLD_Q floor 7; looked at in 672 x 324: 213
+shows dashes, 160 is clean). Wall seams stay wider than a point up to w / 2 units, so the walls fold at
+320 units (FOLD_Q 3). The light index of a wall is normalised to a 320 wide picture in the engine, so these
+distances hold at every picture size.
 """
 
 from __future__ import annotations
@@ -58,7 +65,7 @@ I_TOWER_TOP = 4
 I_SHAPES = (100, 101)        # sky shapes: disc, cloud
 TWIN_FIRST = 32
 LIGHT = 160                  # light level of all sectors: lightnum 10, colormap start row 20
-FOLD_Q = {"floor": 5, "x": 3, "y": 3}   # joints vanish beyond about 1280 / (q + 1) units
+FOLD_Q = {"floor": 7, "x": 3, "y": 3}   # joints vanish beyond about 1280 / (q + 1) units (floor 160, walls 320)
 
 SHADE = 0.88
 
@@ -229,7 +236,6 @@ def face_cell(side: int) -> list[list[int]]:
     """A block: one seam at mid height and a small hatch."""
     t = TWIN_OF[side]
     g = blank(side)
-    hline(g, 62, t)
     hline(g, 63, t)
     rect(g, 50, 18, 77, 36, t)
     return g
@@ -240,13 +246,10 @@ def face_wall(side: int) -> list[list[int]]:
     t = TWIN_OF[side]
     g = blank(side)
     hline(g, 31, t)
-    hline(g, 32, t)
     for x in (0, 64):
         vline(g, x, t, 0, 30)
-        vline(g, x + 1, t, 0, 30)
     for x in (32, 96):
-        vline(g, x, t, 33, 63)
-        vline(g, x + 1, t, 33, 63)
+        vline(g, x, t, 32, 63)
     return g
 
 
@@ -257,19 +260,18 @@ def face_tower(side: int, band: int) -> list[list[int]]:
     for y in range(12, 26):
         for x in range(128):
             g[y][x] = band
-    hline(g, 70, t)
     hline(g, 71, t)
     rect(g, 56, 36, 71, 56, t)
     return g
 
 
 def ground_flat() -> bytes:
-    """64 x 64 floor tile: a joint, 2 texels wide, along each of two edges (a tile grid, one tile = 64 units)."""
+    """64 x 64 floor tile: a joint, 1 texel wide, along each of two edges (a tile grid, one tile = 64 units)."""
     t = TWIN_OF[I_GROUND]
     out = bytearray([I_GROUND] * 4096)
     for i in range(64):
-        out[i] = out[64 + i] = t                  # rows 0 and 1
-        out[i * 64] = out[i * 64 + 1] = t         # columns 0 and 1
+        out[i] = t                                # row 0
+        out[i * 64] = t                           # column 0
     return bytes(out)
 
 

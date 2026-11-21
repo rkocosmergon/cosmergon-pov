@@ -39,6 +39,12 @@ int POV_ControlIsLive(void);
 // Used by the `size` line and by a platform layer that follows its window.
 int POV_ControlRequestSize(int width, int height);
 
+// A window layer's size in pixels, any size from the minimum up (COSMERGON.md, "Picture size"): the picture is
+// the window's own size inside the limits, above them the largest picture of the window's shape inside the limits.
+// Returns 0 nothing taken (below the minimum, or a shape no picture inside the limits has), 1 taken as it is, 2 fitted
+// (the picture is then pov_view_w x pov_view_h, i_video.h).
+int POV_ControlFitSize(int width, int height);
+
 // One iteration of the main loop (called by doomgeneric_Tick in place of the game loop).
 void POV_ControlTick(void);
 

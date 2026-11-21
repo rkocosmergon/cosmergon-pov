@@ -3,8 +3,10 @@
 //
 // The engine draws in the size of the window itself, one point per pixel (COSMERGON.md, "Picture
 // size"): at the start and after every resize (SDL window event) the renderer's output size is
-// handed to POV_ControlRequestSize. A size outside 160 x 100 .. 1280 x 800 is not followed (said once
-// on stderr, counted): the last picture stays and is stretched by SDL to the window.
+// handed to POV_ControlFitSize. A size above 1280 x 800 in one or both axes gets the largest picture of the
+// window's shape inside the limits (said once on stderr, counted), which SDL stretches to the window. A size
+// below 160 x 100, or a shape no picture inside the limits has, is not followed (said once, counted): the last
+// picture stays and is stretched.
 //
 // Always started with -pov-control; the control input is read without blocking, POV_FPS steps
 // a second (default 35, Doom's own rate), and a step draws only when something changed.
@@ -41,6 +43,7 @@ static int s_resized = 0;               // the window's size may have changed
 static int s_tex_w = 0, s_tex_h = 0;    // size of s_texture
 static unsigned long s_size_followed = 0;
 static unsigned long s_size_rejected = 0;
+static unsigned long s_size_fitted = 0;
 static int s_last_rejected_w = 0, s_last_rejected_h = 0;
 
 static unsigned long s_frames = 0;
@@ -85,16 +88,30 @@ static void die(const char *what)
 // pixels) to the engine. Called at the start and after a resize event.
 static void follow_window(void)
 {
-    int w = 0, h = 0;
+    int w = 0, h = 0, fit;
 
     s_resized = 0;
     if (SDL_GetRendererOutputSize(s_renderer, &w, &h) != 0)
     {
         die("SDL_GetRendererOutputSize");
     }
-    if (POV_ControlRequestSize(w, h))
+    fit = POV_ControlFitSize(w, h);
+    if (fit == 1)
     {
         s_size_followed++;
+        return;
+    }
+    if (fit == 2)
+    {
+        s_size_fitted++;
+        if (w != s_last_rejected_w || h != s_last_rejected_h)
+        {
+            s_last_rejected_w = w;
+            s_last_rejected_h = h;
+            fprintf(stderr, "pov: window %d x %d is above %d x %d: the picture is %d x %d "
+                    "(the window's shape, stretched to the window)\n",
+                    w, h, POV_MAX_W, POV_MAX_H, pov_view_w, pov_view_h);
+        }
         return;
     }
     s_size_rejected++;
@@ -222,8 +239,8 @@ static void finish(void)
     fprintf(stderr, "pov: show_ms_per_frame=%.3f (part of the work)\n",
             s_frames > 0 ? (double)s_show_ticks * per_ms / (double)s_frames : 0.0);
     fprintf(stderr, "pov: video=%s renderer=%s\n", SDL_GetCurrentVideoDriver(), info.name ? info.name : "?");
-    fprintf(stderr, "pov: picture size %d x %d, window sizes followed=%lu not followed=%lu\n",
-            DG_OutW, DG_OutH, s_size_followed, s_size_rejected);
+    fprintf(stderr, "pov: picture size %d x %d, window sizes followed=%lu fitted=%lu not followed=%lu\n",
+            DG_OutW, DG_OutH, s_size_followed, s_size_fitted, s_size_rejected);
     POV_ControlSummary(stderr);
     SDL_Quit();
     exit(0);

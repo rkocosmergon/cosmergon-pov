@@ -99,8 +99,8 @@ def sanitizer_findings(err):
             if ("runtime error" in l and not UPSTREAM_UBSAN.search(l)) or "AddressSanitizer" in l]
 
 
-def command(wad):
-    return [BIN, "-iwad", IWAD, "-file", wad, "-pov-control"]
+def command(wad, args=()):
+    return [BIN, "-iwad", IWAD, "-file", wad, "-pov-control"] + list(args)
 
 
 def read_frames(out):
@@ -112,7 +112,7 @@ def read_frames(out):
     return frames
 
 
-def run(data, wad=FLAT_WAD, timeout=60, every=1):
+def run(data, wad=FLAT_WAD, timeout=60, every=1, args=()):
     """Blocking mode: feed all of `data` (str or bytes), return Result.
 
     `every` > 1 thins the frames written: a frame is 768 kB and /tmp is RAM on the build machines,
@@ -121,7 +121,7 @@ def run(data, wad=FLAT_WAD, timeout=60, every=1):
     if isinstance(data, str):
         data = data.encode("ascii")
     with tempfile.TemporaryDirectory() as out:
-        proc = subprocess.run(command(wad), input=data, env=engine_env(out, every=every), stdout=subprocess.DEVNULL,
+        proc = subprocess.run(command(wad, args), input=data, env=engine_env(out, every=every), stdout=subprocess.DEVNULL,
                               stderr=subprocess.PIPE, timeout=timeout)
         err = proc.stderr.decode("ascii", "replace")
         if SANITIZED:
@@ -240,7 +240,9 @@ class CellsAndRows(unittest.TestCase):
         base = empty_frame()
         changed = first_frame("cell 27 24 cell\nnext\n")
         self.assertNotEqual(base, changed)
-        res = run("cell 27 24 cell\nnext\ncell 27 24 empty\nnext\n")
+        # -pov-rise 0: the test is about the state a cell is set to, not the way there (tests/test_rise.py:
+        # by default the sinking cell is still on its way in the next frame)
+        res = run("cell 27 24 cell\nnext\ncell 27 24 empty\nnext\n", args=("-pov-rise", "0"))
         self.assertEqual(res.rc, 0, res.err)
         self.assertEqual(len(res.frames), 2)
         self.assertEqual(res.frames[0], changed)

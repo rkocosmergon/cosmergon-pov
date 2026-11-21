@@ -96,7 +96,36 @@ static unsigned long s_lines = 0;
 static unsigned long s_rejected = 0;
 static int s_summary_done = 0;
 
-static unsigned char s_kind_of[POVC_CELLS];
+static unsigned char s_kind_of[POVC_CELLS];     // the kind a cell has been given (its target; the floor may still travel)
+
+// Rise and sink (COSMERGON.md, "Rise and sink"): a floor never jumps, except when the window is set anew.
+// A moving cell has a start height, a target height, a start step and a length in steps. The clock counts
+// engine steps (35 a second): one drawn frame in blocking mode, the wall clock in live mode.
+#define POV_RISE_MAX_MS     10000       // -pov-rise limit
+#define POV_RISE_DEFAULT_MS 1200        // the iso client's cell animation
+#define POV_STEPS_PER_SEC   35
+#define POV_SNAP_LIVE_STEPS 18          // live: a reset window is filled within this many steps (~0.5 s)
+static int s_rise_steps = 0;            // steps of a travel of POV_H_CELL units; 0 = no animation
+static unsigned long s_step = 0;        // the clock
+static unsigned s_clock_ms = 0;         // live: I_GetTimeMS at the last clock update
+static unsigned s_clock_frac = 0;       // live: milliseconds * 35 not yet turned into a step
+static fixed_t s_rise_from[POVC_CELLS];
+static fixed_t s_rise_to[POVC_CELLS];
+static unsigned long s_rise_t0[POVC_CELLS];
+static int s_rise_len[POVC_CELLS];
+static short s_moving[POVC_CELLS];      // the cells that travel (the only ones looked at in a step)
+static short s_moving_at[POVC_CELLS];  // position in s_moving, -1 = at rest
+static int s_moving_n = 0;
+static unsigned char s_look_of[POVC_CELLS];     // the kind whose look the cell wears now
+static int s_trace = 0;                         // POV_RISE_TRACE set: one stderr line per frame and raised cell
+static unsigned long s_trace_frame = 0;
+// The "snap": while the window is set anew (the start, or `origin`) the cells it is filled with take their height
+// at once. s_snap_todo marks the cells not yet written since the reset.
+static int s_snap = 1;
+static int s_snap_started = 0;
+static unsigned long s_snap_step = 0;
+static int s_snap_left = POVC_CELLS;
+static unsigned char s_snap_todo[POVC_CELLS];
 // Variants (a theme with a POVX lump, see theme_init): which look a cell wears is picked from its WORLD
 // position, so it stays the same when the 48 x 48 window moves over the field (`origin` line).
 #define POV_SLOTS 16
@@ -179,6 +208,40 @@ int POV_ControlRequestSize(int width, int height)
         s_dirty = 1;
     }
     return 1;
+}
+
+// A platform layer that follows its window (doomgeneric_pov.c): the window's size in pixels. Inside the limits it is
+// the picture size (as POV_ControlRequestSize). Above them in one or both axes the picture is the largest one that
+// lies inside the limits and has the window's shape (the window shows it stretched, the points stay square to
+// within half a point of rounding). Below the minimum, or a shape that no picture inside the limits has (a side
+// would fall under its minimum), nothing changes. Returns 0 nothing taken, 1 taken as it is, 2 taken fitted.
+int POV_ControlFitSize(int width, int height)
+{
+    long long w = width, h = height, fw, fh;
+
+    if (w < POV_MIN_W || h < POV_MIN_H)
+    {
+        return 0;
+    }
+    if (w <= POV_MAX_W && h <= POV_MAX_H)
+    {
+        return POV_ControlRequestSize(width, height);
+    }
+    if (w * POV_MAX_H > h * POV_MAX_W)      // wider than the limits' shape: the width is the limit
+    {
+        fw = POV_MAX_W;
+        fh = (h * POV_MAX_W + w / 2) / w;
+    }
+    else
+    {
+        fh = POV_MAX_H;
+        fw = (w * POV_MAX_H + h / 2) / h;
+    }
+    if (fw < POV_MIN_W || fh < POV_MIN_H || fw > POV_MAX_W || fh > POV_MAX_H)
+    {
+        return 0;
+    }
+    return POV_ControlRequestSize((int)fw, (int)fh) ? 2 : 0;
 }
 
 // -pov-size <w>x<h>: exactly two whole numbers in range, else the program stops (a wrong command
@@ -291,11 +354,13 @@ static int ground_edges(int wx, int wy)
     return edges;
 }
 
-// Sets the kind of one cell: its floor height and flat, and the lower texture on the sidedef of
+// Gives one cell the look of a kind: its floor flat, and the lower texture on the sidedef of
 // each neighbour that faces it. The wall texture of a step is the lower texture of the sidedef
 // on the LOWER side (r_segs.c R_StoreWallRange: the seg's own sidedef, drawn when the back floor
 // is higher). So the texture seen from outside a cell of kind K sits on the neighbour's side.
-static void set_kind(int cell, int kind)
+// The lower texture is pegged to the higher floor (no ML_DONTPEGBOTTOM on any line): its top row
+// lies on the top edge of the cell, so a travelling cell carries its texture with it.
+static void set_look(int cell, int kind)
 {
     int d;
     sector_t *sector = &sectors[cell];
@@ -304,8 +369,7 @@ static void set_kind(int cell, int kind)
     const int wy = s_origin_y + cell / POVC_GRID;
     int edges = 0;
 
-    s_kind_of[cell] = (unsigned char)kind;
-    sector->floorheight = s_kind[kind].height * FRACUNIT;
+    s_look_of[cell] = (unsigned char)kind;
     if (kind == K_EMPTY)
     {
         edges = ground_edges(wx, wy);
@@ -323,6 +387,200 @@ static void set_kind(int cell, int kind)
         }
     }
     s_dirty = 1;
+}
+
+static void moving_remove(int cell)
+{
+    int at = s_moving_at[cell];
+
+    if (at >= 0)
+    {
+        int last = s_moving[--s_moving_n];
+
+        s_moving[at] = (short)last;
+        s_moving_at[last] = (short)at;
+        s_moving_at[cell] = -1;
+    }
+}
+
+// Ends the travel of a cell where it stands: the floor is at its target; a cell that sank to nothing
+// now looks empty.
+static void rise_finish(int cell)
+{
+    sectors[cell].floorheight = s_rise_to[cell];
+    moving_remove(cell);
+    if (s_kind_of[cell] == K_EMPTY)
+    {
+        set_look(cell, K_EMPTY);
+    }
+    s_dirty = 1;
+}
+
+// The cell takes its kind at once: no travel.
+static void set_kind_now(int cell, int kind)
+{
+    moving_remove(cell);
+    s_kind_of[cell] = (unsigned char)kind;
+    sectors[cell].floorheight = s_kind[kind].height * FRACUNIT;
+    set_look(cell, kind);
+}
+
+// Is the cell written in the snap (the window is being set anew)? Marks it as written.
+static int snap_takes(int cell)
+{
+    if (!s_snap)
+    {
+        return 0;
+    }
+    if (!s_snap_started)
+    {
+        s_snap_started = 1;
+        s_snap_step = s_step;
+    }
+    if (s_snap_todo[cell])
+    {
+        s_snap_todo[cell] = 0;
+        if (--s_snap_left == 0)
+        {
+            s_snap = 0;
+        }
+    }
+    return 1;
+}
+
+// The window is set anew (start, `origin`): everything stands where it goes, and the snap opens.
+static void snap_open(void)
+{
+    int i;
+
+    for (i = 0; i < POVC_CELLS; i++)
+    {
+        s_snap_todo[i] = 1;
+    }
+    s_snap_left = POVC_CELLS;
+    s_snap = 1;
+    s_snap_started = 0;
+}
+
+// Sets the kind of one cell (the lines `cell` and `row`). A cell whose height changes travels from the
+// height it has now to the new one; one that already has the kind, or any cell in the snap, changes nothing
+// on the way. A rising cell wears the look of its new kind from the first step; a cell that sinks to nothing
+// keeps its look until it is down; a change between two raised kinds takes the new look at once and the
+// height travels; a change between kinds of one height (cell and own) is at once.
+static void set_kind(int cell, int kind)
+{
+    const fixed_t target = s_kind[kind].height * FRACUNIT;
+    const fixed_t now = sectors[cell].floorheight;
+    long long dist;
+    int steps;
+
+    if (snap_takes(cell) || s_rise_steps == 0)
+    {
+        set_kind_now(cell, kind);
+        return;
+    }
+    if (kind == s_kind_of[cell])
+    {
+        return;
+    }
+    s_kind_of[cell] = (unsigned char)kind;
+    if (target == now)
+    {
+        moving_remove(cell);
+        set_look(cell, kind);
+        return;
+    }
+    dist = target > now ? (long long)target - now : (long long)now - target;
+    // the speed is the same for every kind (POV_H_CELL units in s_rise_steps), so a reversal takes the time of
+    // the way that is left
+    steps = (int)((dist * s_rise_steps + (long long)POV_H_CELL * FRACUNIT - 1) / ((long long)POV_H_CELL * FRACUNIT));
+    if (steps < 1)
+    {
+        steps = 1;
+    }
+    s_rise_from[cell] = now;
+    s_rise_to[cell] = target;
+    s_rise_t0[cell] = s_step;
+    s_rise_len[cell] = steps;
+    if (s_moving_at[cell] < 0)
+    {
+        s_moving_at[cell] = (short)s_moving_n;
+        s_moving[s_moving_n++] = (short)cell;
+    }
+    if (kind != K_EMPTY)
+    {
+        set_look(cell, kind);
+    }
+    s_dirty = 1;
+}
+
+// The floor of a travelling cell at the clock: smoothstep 3t^2 - 2t^3 in integers (t = k / n), exact at both
+// ends, monotone, never outside [from, to].
+static fixed_t rise_height(int cell)
+{
+    const unsigned long k_raw = s_step - s_rise_t0[cell];
+    const long long n = s_rise_len[cell];
+    const long long k = k_raw > (unsigned long)n ? n : (long long)k_raw;
+    const long long delta = (long long)s_rise_to[cell] - s_rise_from[cell];
+
+    return (fixed_t)(s_rise_from[cell] + delta * (k * k * (3 * n - 2 * k)) / (n * n * n));
+}
+
+// One step of every travelling cell. Nothing is looked at when nothing travels.
+static void rise_update(void)
+{
+    int i = 0;
+
+    while (i < s_moving_n)
+    {
+        int cell = s_moving[i];
+
+        if (s_step - s_rise_t0[cell] >= (unsigned long)s_rise_len[cell])
+        {
+            rise_finish(cell);      // swaps the last travelling cell into slot i: look at i again
+            continue;
+        }
+        sectors[cell].floorheight = rise_height(cell);
+        i++;
+    }
+}
+
+// Live clock: engine steps from the wall clock, whatever the rate of the loop.
+static void rise_clock_live(void)
+{
+    unsigned now = (unsigned)I_GetTimeMS();
+
+    s_clock_frac += (now - s_clock_ms) * POV_STEPS_PER_SEC;
+    s_clock_ms = now;
+    s_step += s_clock_frac / 1000;
+    s_clock_frac %= 1000;
+}
+
+// -pov-rise <ms>: whole milliseconds 0..POV_RISE_MAX_MS, else the program stops.
+static void rise_from_command_line(void)
+{
+    int i = M_CheckParmWithArgs("-pov-rise", 1);
+    int ms = POV_RISE_DEFAULT_MS;
+
+    if (i > 0)
+    {
+        const char *text = myargv[i + 1];
+        char *end = NULL;
+        long value;
+
+        errno = 0;
+        value = strtol(text, &end, 10);
+        if (errno != 0 || end == text || *end != '\0' || !isdigit((unsigned char)text[0]) || value > POV_RISE_MAX_MS)
+        {
+            I_Error("pov-control: -pov-rise needs whole milliseconds 0..%d, got '%s'", POV_RISE_MAX_MS, text);
+        }
+        ms = (int)value;
+    }
+    s_rise_steps = ms == 0 ? 0 : (ms * POV_STEPS_PER_SEC + 500) / 1000;
+    if (ms > 0 && s_rise_steps < 1)
+    {
+        s_rise_steps = 1;
+    }
 }
 
 static fixed_t to_fixed_world(double cells)
@@ -914,10 +1172,15 @@ static void apply(const command_t *c)
             POV_SkySetOrigin(c->a, c->b);
             s_dirty = 1;
         }
+        while (s_moving_n > 0)
+        {
+            rise_finish(s_moving[0]);       // a reset window: the heights stand at once
+        }
         for (i = 0; i < POVC_CELLS; i++)
         {
-            set_kind(i, s_kind_of[i]);      // the variants follow the world position
+            set_look(i, s_kind_of[i]);      // the variants follow the world position
         }
+        snap_open();
         break;
     case OP_DAYTIME:
         if (POV_SkyActive())
@@ -1600,8 +1863,13 @@ static void init_world(void)
     // Whatever pattern the map was generated with: start with everything empty.
     for (i = 0; i < POVC_CELLS; i++)
     {
-        set_kind(i, K_EMPTY);
+        s_moving_at[i] = -1;
+        set_kind_now(i, K_EMPTY);
     }
+    rise_from_command_line();
+    s_trace = getenv("POV_RISE_TRACE") != NULL;
+    snap_open();
+    s_clock_ms = (unsigned)I_GetTimeMS();
 
     // The player: keeps no sector link (never drawn), no blockmap link, never moves by itself.
     mo = players[consoleplayer].mo;
@@ -1631,8 +1899,35 @@ static void init_world(void)
 
 void R_ExecuteSetViewSize(void);
 
+static unsigned long s_drawn_step = 0;   // the clock at the last frame
+
 static void render_frame(void)
 {
+    if (s_live)
+    {
+        rise_clock_live();
+    }
+    else
+    {
+        s_step++;       // blocking: every frame is one step
+    }
+    s_drawn_step = s_step;
+    rise_update();
+    if (s_trace)
+    {
+        int c;
+
+        // measure for tests/test_rise.py: the floor (16.16 units), target kind and look of every raised cell
+        s_trace_frame++;
+        for (c = 0; c < POVC_CELLS; c++)
+        {
+            if (sectors[c].floorheight != 0 || s_look_of[c] != K_EMPTY || s_kind_of[c] != K_EMPTY)
+            {
+                fprintf(stderr, "rise: frame=%lu cell=%d h=%d kind=%d look=%d\n", s_trace_frame, c,
+                        (int)sectors[c].floorheight, (int)s_kind_of[c], (int)s_look_of[c]);
+            }
+        }
+    }
     commit();
     if (setsizeneeded)
     {
@@ -1658,6 +1953,12 @@ static void render_frame(void)
         outline_pass();
     }
     s_dirty = 0;
+    // blocking: the window's snap ends with the first frame (a `next` ends a picture); live it ends in the
+    // tick, when the filling has had its time (POV_ControlTick)
+    if (!s_live)
+    {
+        s_snap = 0;
+    }
     I_FinishUpdate();       // -> DG_DrawFrame
 }
 
@@ -1690,7 +1991,20 @@ void POV_ControlTick(void)
             s_dirty = 1;
         }
     }
+    if (s_live)
+    {
+        rise_clock_live();
+        // the lines of one picture may arrive in two reads: the snap stays open for a while, never longer
+        if (s_snap && s_snap_started && s_step - s_snap_step >= POV_SNAP_LIVE_STEPS)
+        {
+            s_snap = 0;
+        }
+    }
     pump();
+    if (s_live && s_moving_n > 0 && s_step != s_drawn_step)
+    {
+        s_dirty = 1;        // something travels and the clock moved: the next picture
+    }
     if (s_quit)
     {
         s_done = 1;

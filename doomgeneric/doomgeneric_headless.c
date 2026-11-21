@@ -10,6 +10,9 @@
 //                     in which something changed
 //                     (the way a window platform reads); unset/0 = block until `next`/`quit`/EOF
 //   POV_LIVE_MS       live mode: real milliseconds slept per tick (default 10)
+//   POV_WINDOW        with -pov-control: <w>x<h>, the size of a window that this run pretends to have: the
+//                     picture is chosen as the window platform does (POV_ControlFitSize: the window's own size
+//                     inside the limits, above them the largest picture of its shape). Test hook; -pov-size wins.
 
 #include <errno.h>
 #include <limits.h>
@@ -143,6 +146,8 @@ void DG_Init(void)
             exit(2);
         }
     }
+    const char *window;
+
     s_control = POV_ControlEnabled();
     s_every = env_ulong("POV_EVERY", s_control ? 1 : 35);
     s_max_frames = env_ulong("POV_FRAMES", s_control ? ULONG_MAX : 700);
@@ -152,6 +157,20 @@ void DG_Init(void)
 
         POV_ControlSetLive(live != NULL && strcmp(live, "1") == 0);
         s_live_ms = env_ulong("POV_LIVE_MS", 10);
+        window = getenv("POV_WINDOW");
+        if (window != NULL && *window != '\0')
+        {
+            int w = 0, h = 0;
+            char tail = 0;
+
+            if (sscanf(window, "%dx%d%c", &w, &h, &tail) != 2)
+            {
+                fprintf(stderr, "headless: POV_WINDOW must be <w>x<h>, got '%s'\n", window);
+                exit(2);
+            }
+            fprintf(stderr, "headless: window %d x %d -> %s\n", w, h,
+                    POV_ControlFitSize(w, h) == 0 ? "not followed" : "followed");
+        }
     }
     clock_gettime(CLOCK_MONOTONIC, &s_start);
 }

@@ -70,14 +70,17 @@ def pix(frame, x, y):
     return tuple(frame[off:off + 3])
 
 
-def engine(data, args=(), binary=None, every=1, timeout=120, wad=MAP, theme=None):
+def engine(data, args=(), binary=None, every=1, timeout=120, wad=MAP, theme=None, window=None):
     """Run the engine on `data` (str). Returns (returncode, stderr, frames)."""
     cmd = [binary or tc.BIN, "-iwad", tc.IWAD, "-file", wad]
     if theme:
         cmd += ["-pov-theme", theme]
     cmd += ["-pov-control", "-warp", "1", "1"] + list(args)
     with tempfile.TemporaryDirectory() as out:
-        proc = subprocess.run(cmd, input=data.encode("ascii"), env=tc.engine_env(out, every=every),
+        env = tc.engine_env(out, every=every)
+        if window:
+            env["POV_WINDOW"] = window
+        proc = subprocess.run(cmd, input=data.encode("ascii"), env=env,
                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=timeout)
         err = proc.stderr.decode("ascii", "replace")
         if tc.SANITIZED and binary is None:
@@ -372,6 +375,81 @@ class Window(unittest.TestCase):
                 seen = {tuple(body[i:i + 3]) for i in range(0, len(body), 3)}
                 self.assertLessEqual(seen, allowed, (name, size, sorted(seen - allowed)[:3]))
                 self.assertIn(make_theme.NAVY, seen)
+
+
+def fitted(w, h):
+    """The picture a window of w x h pixels gets: its own size inside the limits, above them the largest of its shape
+    (exact fractions, rounded half up), None where no picture inside the limits has the shape (or w, h under the minimum)."""
+    from fractions import Fraction
+    if w < MIN_W or h < MIN_H:
+        return None
+    if w <= MAX_W and h <= MAX_H:
+        return w, h
+    scale = min(Fraction(MAX_W, w), Fraction(MAX_H, h))
+    fw, fh = int(w * scale + Fraction(1, 2)), int(h * scale + Fraction(1, 2))
+    if fw < MIN_W or fh < MIN_H:
+        return None
+    return fw, fh
+
+
+class WindowFit(unittest.TestCase):
+    """A window above the limits gets the largest picture of its shape (POV_WINDOW is the headless build's stand-in for
+    the window platform, which calls the same POV_ControlFitSize)."""
+
+    SIZES = ((701, 833), (2000, 1000), (1920, 1080), (1281, 800), (1280, 801), (3000, 2000), (1300, 700), (1280, 800),
+             (900, 1500), (1279, 5000), (5000, 790), (160, 100), (640, 400), (672, 324), (1280, 799), (100000, 80000))
+
+    def picture(self, window, args=()):
+        rc, err, frames = engine(SCENE, args, window=window, every=1000)
+        self.assertEqual(rc, 0, err)
+        return size_of(frames[-1]), frames[-1]
+
+    def test_the_table(self):
+        self.assertEqual(fitted(701, 833), (673, 800))
+        self.assertEqual(fitted(2000, 1000), (1280, 640))
+        self.assertEqual(fitted(1920, 1080), (1280, 720))
+        for w, h in self.SIZES:
+            want = fitted(w, h)
+            self.assertIsNotNone(want, (w, h))
+            got, _ = self.picture("%dx%d" % (w, h))
+            self.assertEqual(got, want, (w, h))
+            self.assertTrue(MIN_W <= got[0] <= MAX_W and MIN_H <= got[1] <= MAX_H, (w, h, got))
+
+    def test_the_largest_of_the_shape_and_the_shape_itself(self):
+        for w, h in self.SIZES:
+            (fw, fh), _ = self.picture("%dx%d" % (w, h))
+            if (w, h) != (fw, fh):
+                self.assertTrue(fw == MAX_W or fh == MAX_H, (w, h, fw, fh))
+            # the points stay square to within half a point of rounding, in both axes
+            self.assertLessEqual(abs(fw * h - w * fh), max(w, h) // 2 + 1, (w, h, fw, fh))
+
+    def test_a_fitted_picture_is_the_picture_of_that_size(self):
+        got, frame = self.picture("701x833")
+        _, same = self.picture(None, ("-pov-size", "%dx%d" % got))
+        self.assertEqual(got, (673, 800))
+        self.assertEqual(frame, same)
+
+    def test_under_the_minimum_and_without_a_shape_nothing_changes(self):
+        for window in ("159x200", "200x99", "1x1", "3000x150", "150x3000", "5000x300"):
+            self.assertIsNone(fitted(*[int(v) for v in window.split("x")]), window)
+            got, _ = self.picture(window)
+            self.assertEqual(got, (640, 400), window)
+
+    def test_a_size_given_on_the_command_line_wins(self):
+        got, _ = self.picture("2000x1000", ("-pov-size", "320x200"))
+        self.assertEqual(got, (320, 200))
+
+    def test_the_size_line_still_refuses_what_is_above_the_limits(self):
+        rc, err, frames = engine("size 1281 800\nnext\n", window="1920x1080", every=1000)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(size_of(frames[-1]), (1280, 720), "the picture of the window stays")
+        self.assertIn("rejected=1", err)
+
+    def test_a_bad_window_variable_stops_the_program(self):
+        for bad in ("abc", "640", "640x", "x400", "640x400x1", "640x400 "):
+            rc, err, _ = engine("next\n", window=bad)
+            self.assertNotEqual(rc, 0, bad)
+            self.assertIn("POV_WINDOW", err, bad)
 
 
 if __name__ == "__main__":

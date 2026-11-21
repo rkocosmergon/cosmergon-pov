@@ -18,6 +18,7 @@ License: GPL-2.0 (see `LICENSE`, unchanged).
   calm of the far floor ("Themes").
 - `tests/test_headless.sh`: smoke test.
 - `tests/test_size.py`, `tools/measure_size.py`: picture size (package P5, "Picture size" below).
+- `tests/test_rise.py`, `tools/rise_samples.py`, `tools/measure_rise.py`: cells rise out of the ground and sink into it ("Rise and sink").
 - One upstream change: `doomgeneric/i_system.c` skips the zenity error dialog when
   `POV_NO_ERROR_DIALOG` is defined (set in `Makefile.headless`). The message still goes to stderr.
 
@@ -474,6 +475,92 @@ the zone has 17.95 MB free of 24 (19.34 before).
 against the perspective (size, place, lower edge a row in 3 shapes x 2 directions x 3 places, size by distance, parallax by a
 step and by the wind), one sky for all cubes, cubes against their corners, depth order, the haze in flat steps, the haze contrast.
 
+## Rise and sink (package P8)
+
+**Rule: the height of a cell never changes in a jump, unless the window is set anew.** A `cell` or `row` line that changes the
+kind of a cell so that its height changes makes the floor travel from the height it has NOW to the new one. Option
+`-pov-rise <ms>` (whole milliseconds 0..10000, default 1200 = the cell animation of the iso client; 0 = jump as before;
+anything else stops the program with a message, like `-pov-size`). No new control line. The upper limit is ten times the default:
+a travel longer than that would hardly ever rest between two ticks of a world.
+
+- **Clock:** engine steps, 35 a second: `ms * 35 / 1000` rounded, at least 1 (1200 ms = 42 steps). Blocking mode (headless):
+  every drawn frame is one step, so the result depends only on the lines. Live mode (window, `POV_CONTROL_LIVE=1`): the wall
+  clock (`I_GetTimeMS`) turned into steps, so `POV_FPS` does not change the length; a picture is due in every step in which
+  something travels, and not otherwise.
+- **Length:** the speed is the same for every kind, `POV_H_CELL` (128) units in the travel time: a cell takes 42 steps,
+  a wall (64) 21, a tower (147) 49, a wall to cell (64 units) 21, a tower to cell (19 units) 7. A reversal takes the time of the way
+  that is left (rounded up, at least one step): a cell that dies after 10 of its 42 steps sinks the 18.3 units it has risen in
+  7 steps (the smoothstep is slow at its start). Why not one length for all: a wall would crawl at half the speed of a cell, and
+  the way back from a reversal would need a second rule. The price: a tower needs 7 steps (0.2 s) more than a cell.
+- **Curve:** smoothstep `3t^2 - 2t^3` in whole numbers: `from + (to - from) * k^2 (3n - 2k) / n^3` in 64 bit, rounded towards
+  zero (n steps, k <= n), exact at both ends, monotone, never outside `[from, to]`. At most 1.5 times the mean speed.
+- **Look while travelling:** a rising cell wears the wall texture and top of its NEW kind from the first step (`set_look`).
+  A cell that sinks to `empty` keeps the look of its old kind until it is down, then it looks empty. Between two raised kinds of a
+  different height (wall to cell, tower to cell) the new kind's look applies at once and the height travels (the simplest readable form:
+  the look is that of what it becomes, the height is what moves). Kinds of one height (`cell` and `own`) change at once, no travel.
+  The lower texture of a step is pegged to the higher floor (no `ML_DONTPEGBOTTOM` on any line): its top row lies on the
+  top edge of the cell, so a rising cell carries its texture along and does not slide it like a curtain (looked at in
+  `out/muster-fahrt`, no change needed). A line that gives a cell the kind it already has changes nothing: the bridge may send all rows in every picture.
+- **When nothing travels (the snap):** the window is "set anew" at the start and at every `origin` line. `origin` lets all
+  travelling cells land at once (the world under them changed), re-assigns the looks and opens the snap: until every one of the 2304 cells
+  has been written once since then, `cell` and `row` lines set heights at once. The snap also ends at a drawn frame in blocking mode (a `next`
+  closes a picture); live mode ends it 18 steps (about 0.5 s) after the first line of the filling, at the start of the next tick, so that
+  a picture whose lines arrive in two reads does not grow. The first filling is the same snap (open from the start; blocking mode: until the
+  first frame). A bridge that sends `origin`, then 48 rows, then `next`, never sees a travel; a change in the following picture
+  travels. **Without `origin`** (an older bridge) nothing tells a moved window from a world that ticked: everything whose kind changed travels
+  (a window moved by one cell grows its changed cells for 1.2 s); a running travel is never broken by it (the same kind again changes nothing).
+  No heuristic on purpose: a Life tick can change many cells too.
+- **Things:** `commit()` sets `mo.z` from the floor of the thing's sector in every drawn frame, so they ride on a travelling floor.
+  The camera too (`viewz` = floor + 41, every frame). A camera that stands in a rising cell (the server never does it, nothing pushes
+  it out) rides up with its eye: no crash, no hall of mirrors, the neighbouring cells are seen from the new height
+  (`out/muster-fahrt/kamera-in-fahrender-zelle.png`).
+- **Passes:** outline, strokes, variants (by world position), haze and sky run on the finished picture of every step and need nothing for it.
+- **Cost:** `rise_update` runs over the list of the travelling cells only (`s_moving`, at most 2304 entries, no allocation); nothing is looked at when nothing travels.
+- **Measure** (`POV_RISE_TRACE=1`, stderr): per frame and per raised cell `rise: frame=<f> cell=<c> h=<16.16 floor> kind=<target> look=<kind of the look>`; for the tests.
+- **Window above the limits (also P8):** `POV_ControlFitSize` (the window platform's call; the `size` line and `-pov-size` stay strict):
+  inside 160 x 100 .. 1280 x 800 the window's own size; above in one or both axes the largest picture of the window's shape (scale `min(1280 / w, 800 / h)`,
+  rounded to the nearest point; 701 x 833 gives 673 x 800, 1920 x 1080 gives 1280 x 720), stretched by SDL; below the minimum, or a shape no picture inside the
+  limits has (3000 x 150 would need 1280 x 64), nothing changes as before. The renderer has no divisibility rule (odd sizes are allowed). The headless build
+  has the test hook `POV_WINDOW=<w>x<h>`. The window build itself is still not run here (no SDL2); it passes the same call.
+
+### Samples
+
+    python3 tools/rise_samples.py        # out/muster-fahrt: auftauchen, versinken, glider; wueste and gelbestadt; 672x324 and 1280x640
+
+### Measured (`tools/measure_size.py`, unchanged scene; `tools/measure_rise.py`; ms a picture, 3 runs, noisy machine)
+
+Unchanged scene of `tools/measure_size.py` (no cell travels), before / after this package (same machine, noisy: the slowest values jump between runs):
+
+| Size | Theme | Before mean | After mean | Before slowest | After slowest |
+|---|---|---|---|---|---|
+| 320 x 200 | none | 0.59 | 0.56 | 1.91 | 1.39 |
+| 320 x 200 | wueste | 2.28 | 2.09 | 11.39 | 3.61 |
+| 672 x 324 | none | 1.22 | 1.17 | 2.57 | 2.33 |
+| 672 x 324 | wueste | 4.67 | 4.90 | 8.53 | 7.82 |
+| 1280 x 800 | none | 4.83 | 4.73 | 8.13 | 7.92 |
+| 1280 x 800 | wueste | 19.62 | 20.35 | 121.48 | 83.25 |
+
+Worst case, `tools/measure_rise.py`: a checkerboard on the whole window whose 2304 cells all flip every 42 pictures, so all of them travel in every picture
+(420 pictures, 3 runs), against the same lines with `-pov-rise 0` and against a field at rest with the default rise:
+
+| Size | Theme | At rest | All flip, jumps (`-pov-rise 0`) | All travel (default) |
+|---|---|---|---|---|
+| 672 x 324 | none | 1.84 | 2.05 | 2.13 |
+| 672 x 324 | wueste | 5.50 | 5.55 | 5.76 |
+| 1280 x 800 | none | 6.08 | 6.41 | 6.43 |
+| 1280 x 800 | wueste | 24.68 | 24.19 | 24.53 |
+
+Travelling costs at most 0.2 ms a picture against jumping (inside the noise); a resting field costs nothing extra (no loop over the 2304 sectors).
+(The checkerboard itself costs more than the usual scene: many faces; the 1280 x 800 slowest of 110 to 119 ms is the machine, it also shows with jumps.)
+
+### Tests
+
+    python3 -m unittest tests.test_rise tests.test_size.WindowFit
+    POV_OLD_BIN=<build before P8> python3 -m unittest tests.test_rise.WithoutARise   # bit identity of -pov-rise 0
+
+Existing tests: only `tests.test_control.test_cell_changes_the_picture_and_empty_restores_it` runs with `-pov-rise 0` (it asserts the state a cell
+is set to, not the way there; the sinking cell would still be on its way in the next frame). All others are unchanged: their first filling is a snap.
+
 ## Picture size (package P5)
 
 The renderer draws in the size of the window, one point a pixel, square points, from 160 x 100 up to
@@ -498,8 +585,8 @@ views: identical hashes).
   degrees) at about one fine angle per point at the picture's edge: wider would be coarser than a point.
   Lower: 160 x 100 is half of Doom's own, the smallest picture in which a cell is still a block.
   A size outside is rejected: a `size` line like any bad line (counted, nothing changes), `-pov-size`
-  stops the program with a message, the window does not follow it (says so once on stderr, counts, and
-  SDL stretches the last picture).
+  stops the program with a message. The window does not follow it either way: above the limits it gets the picture of its
+  shape ("Rise and sink", P8), below the minimum it says so once on stderr, counts, and SDL stretches the last picture.
 - **Shape and angle:** the horizontal angle stays 90 degrees (`FIELDOFVIEW`), the vertical one is what the
   shape gives. Doom's projection already uses one scale for both directions (`FixedMul(world, rw_scale)`
   and `centerxfrac`), so the points are square; there is no 1.2 factor in the renderer (it lived only in

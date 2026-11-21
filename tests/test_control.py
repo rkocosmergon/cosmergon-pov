@@ -85,10 +85,10 @@ def engine_env(out, live=False, every=1):
 
 # Upstream behaviour that every frame shows, independent of the input (reported in COSMERGON.md):
 #  - left shift of negative values (benign with gcc, formally undefined), many places
-#  - r_draw.c:640-643 and 805-808 (R_DrawSpan, R_DrawSpanLow): span position shift wraps on purpose
+#  - r_draw.c:653-656 and 840-843 (R_DrawSpan, R_DrawSpanLow): span position shift wraps on purpose
 #  - r_plane.c:447-457 reads top[-1] / top[1280]: the pad entries around visplane_t.top/bottom (r_defs.h;
 #    upstream: top[320] of type byte)
-UPSTREAM_UBSAN = re.compile(r"left shift of negative value|^r_draw\.c:(64[0-3]|80[5-8]):\d+: runtime error: left shift"
+UPSTREAM_UBSAN = re.compile(r"left shift of negative value|^r_draw\.c:(65[3-6]|84[0-3]):\d+: runtime error: left shift"
                             r"|^r_plane\.c:4(4[7-9]|5[0-7]):\d+: runtime error: index -?\d+ out of bounds for type "
                             r"'(byte \[320\]|short unsigned int \[1280\])'")
 
@@ -481,6 +481,8 @@ class BadInput(unittest.TestCase):
             "cell 1 1 tree", "cell 1 1", "cell 1 1 cell extra", "CELL 1 1 cell", "celll 1 1 cell",
             "next 0", "next -1", "next x", "next 1 2", "next 1000001",
             "quit now", "light 256", "light -1",
+            "origin", "origin 1", "origin 1 2 3", "origin 1.5 2", "origin 2 1.5", "origin 1000001 0", "origin 0 -1000001",
+            "origin nan 0", "origin 1e3 0", "origin a b", "ORIGIN 0 0", "origin 0x1 0", "origin 99999999999 0", "origin - 0",
             " ".join(["cell"] * 200),            # too many fields
         ]
         lines += garbage_lines(10000)
@@ -538,6 +540,25 @@ class BadInput(unittest.TestCase):
         self.assertEqual(res.rc, 0, res.err[-300:])
         self.assertEqual(res.summary[0] - res.summary[1], 1)  # only `next` is valid, nothing else
         self.assertEqual(res.frames[0], empty_frame())
+
+
+class OriginLine(unittest.TestCase):
+    """`origin <x> <y>`: world coordinates of cell 0, 0 of the window (variants of a theme follow them)."""
+
+    def test_valid_lines_are_accepted_at_the_edges(self):
+        good = ["origin 0 0", "origin 5 -7", "origin -1000000 1000000", "origin 1000000 -1000000", "origin 007 0",
+                "origin\t1\t2", "origin   -0 0"]
+        res = run("\n".join(good) + "\nnext\n")
+        self.assertEqual(res.rc, 0, res.err[-300:])
+        self.assertEqual(res.summary, (len(good) + 1, 0), res.err[-300:])
+
+    def test_without_a_theme_the_origin_changes_nothing(self):
+        # without a theme every kind has one look: the picture cannot depend on where the window lies
+        a = first_frame(SCENE + "next\n")
+        b = first_frame("origin 123 -456\n" + SCENE + "next\n")
+        c = first_frame(SCENE + "origin -1000000 999999\nnext\n")
+        self.assertEqual(a, b)
+        self.assertEqual(a, c)
 
 
 class EndOfInput(unittest.TestCase):
@@ -654,6 +675,8 @@ class LongRandomSequence(unittest.TestCase):
                 lines.append("cam %r %r %r" % (pos(), pos(), rng.uniform(-720, 720)))
             elif r < 0.88:
                 lines.append("light %d" % rng.randrange(256))
+            elif r < 0.89:
+                lines.append("origin %d %d" % (rng.randint(-1000000, 1000000), rng.randint(-1000000, 1000000)))
             else:
                 n = rng.choice([1, 1, 1, 2])
                 lines.append("next %d" % n if n > 1 else "next")

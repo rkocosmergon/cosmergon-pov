@@ -711,7 +711,7 @@ void R_ExecuteSetViewSize (void)
 	colfunc = basecolfunc = R_DrawColumn;
 	fuzzcolfunc = R_DrawFuzzColumn;
 	transcolfunc = R_DrawTranslatedColumn;
-	spanfunc = viewwidth > POV_REF_W ? R_DrawSpanFine : R_DrawSpan;	// cosmergon-pov
+	spanfunc = (viewwidth > POV_REF_W || pov_flat_dshift) ? R_DrawSpanFine : R_DrawSpan;	// cosmergon-pov
     }
     else
     {

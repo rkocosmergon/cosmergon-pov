@@ -11,6 +11,7 @@ License: GPL-2.0 (see `LICENSE`, unchanged).
 - `doomgeneric/Makefile.headless`: build without SDL and sound, output `cosmergon-pov-headless`.
 - `scripts/download-freedoom.sh`: pinned, SHA-256 checked Freedoom download.
 - `tools/ppm2png.py`: PPM to PNG (standard library only).
+- `tools/theme_art.py`, `tools/make_theme.py`, `tools/theme_samples.py`: the themes and their samples ("Themes").
 - `tests/test_headless.sh`: smoke test.
 - `tests/test_size.py`, `tools/measure_size.py`: picture size (package P5, "Picture size" below).
 - One upstream change: `doomgeneric/i_system.c` skips the zenity error dialog when
@@ -92,7 +93,7 @@ Highwater marks of one run are printed at exit (`headless: highwater ...`).
 | `MAXVISPLANES` | r_plane.c:45, checks :238 and :374 | 128 | 23424 (independent of the picture width; each plane now holds two 16 bit rows of 1280 entries, 5.1 kB: the array is 120 MB of address space, only the planes in use are touched) | `R_Subsector` finds at most 2 planes per subsector (2*2304) plus `R_CheckPlane` duplicates at most 2 per drawseg (2*9408) | `R_FindPlane`: `I_Error`; `R_CheckPlane` (r_plane.c:306): no check, wrote past the array | `I_Error` in both |
 | `MAXOPENINGS` | r_plane.c:52, check :378 | 20480 (`SCREENWIDTH*64`) | 486400 (was 121600 for 320 wide) | a screen column is covered by at most 95 lines (47 + 47 inner + 1 border) x2 for rounding of column borders at shared vertices x2 for the top and bottom clip array copied per drawseg: 380 per column, times the widest picture `POV_MAX_W` 1280 (the bound is per column, so it scales with the width and with nothing else) | checked only at the end of the frame, after writing past the array | `I_Error` before each write (r_segs.c, `POV_NeedOpenings`) |
 | `MAXSEGS` (solidsegs) | r_bsp.c:81 | 32 | 642 (was 162) | posts are separated by at least one column: at most `POV_MAX_W/2` = 640, plus 2 sentinels | no check, wrote past the array | `I_Error` (r_bsp.c, insertion) |
-| zone memory | i_system.c:58-59 | 6 MiB | 9 MiB | 6 MiB upstream plus this map's level data, which stays in the zone: 2.29 MiB (vertexes 19208, segs 516096, subsectors 36864, sectors 294912, lines 413952, sides 221184, nodes 119756, blockmap 27656 + links 18432, reject 663552, line lists 73728 bytes; struct sizes from `sizeof` in this build) | `Z_Malloc` ends in `I_Error` | unchanged (`I_Error`); `MIN_RAM` = `DEFAULT_RAM`, so a failed allocation says so |
+| zone memory | i_system.c:58-59 | 6 MiB | 24 MiB (9 until the themes with variants) | 6 MiB upstream plus this map's level data, which stays in the zone: 2.29 MiB (vertexes 19208, segs 516096, subsectors 36864, sectors 294912, lines 413952, sides 221184, nodes 119756, blockmap 27656 + links 18432, reject 663552, line lists 73728 bytes; struct sizes from `sizeof` in this build); a theme with variants adds 64 wall textures of 256 x 256 (a 64 KiB composite and two 34 KiB patches each, 8.5 MiB) and 52 flats of 64 KiB (3.4 MiB), purgeable but kept while in view | `Z_Malloc` ends in `I_Error` | unchanged (`I_Error`); `MIN_RAM` = `DEFAULT_RAM`, so a failed allocation says so |
 | `MAXVISSPRITES` | r_things.h:25, r_things.c:322 | 128 | 256 | one vissprite per thing in view; the control channel (P3) has at most 256 things (ids 0..255), the player is never linked into a sector | extra sprites dropped (quietly) | `I_Error` |
 | `MAXSPECIALCROSS`, `MAXINTERCEPTS` | p_local.h:155,219 | | | no special lines, no shooting, no input | | not reachable |
 | `short` blockmap offsets | p_setup.c:84 (signed) | 32767 | | the lump has 13828 shorts; the generator refuses more than 32767 | | generator error |
@@ -137,6 +138,7 @@ corner; angles in degrees, 0 = east, counter-clockwise.
 | `light <level>` | light level of all sectors | 0..255 |
 | `next [n]` | draw n frames (default 1) with the state reached so far | 1..1,000,000 |
 | `size <w> <h>` | picture size in points for the next frames, shown 1 : 1 (see "Picture size") | w integer 160..1280, h integer 100..800 |
+| `origin <x> <y>` | world coordinates of cell 0, 0 of the window (default 0 0); the look of a cell follows its world position (see "Themes"). The cell lines keep using window coordinates | x, y integers within +-1,000,000 |
 | `quit` | end | |
 
 A line that is not exactly one of these is rejected as a whole, counted, and changes nothing; the first
@@ -227,11 +229,43 @@ dimming with distance, flat wall textures per kind and direction, floors, a sky,
   rank (a surface keeps its area). Sky gradient indices are one class: no lines in the sky. Wall pixels
   carry the id of their wall plane (`pov_wall_id`, `r_segs.c`/`r_draw.c`): collinear cell edges are one
   plane, two planes at different distances get a line even where their colour is equal.
-- Joints (floor tiles, slab seams, hatches) are drawn into the textures with "twin" colour indices, 1 texel
-  wide; the COLORMAP of the farther light rows maps a twin to its surface colour, so joints vanish with
-  distance (see the header of `tools/make_theme.py`; the theme sets the light level of all sectors). The
-  light of a wall or a thing is looked up with the scale normalised to 320 points (`R_LightIndex`,
-  r_main.h), so it depends on the distance only, at any picture size.
+- **Surfaces with life (package P6).** Every kind has several looks and the floor too; the pictures are drawn by
+  `tools/theme_art.py` (standard library, deterministic, nothing outside) and are the same in every theme (made of
+  palette indices; the theme only gives them colours). A wall texture is 256 x 256 texels over a cell edge of 128
+  units, a floor flat 256 x 256 over one cell: two texels to the unit (`pov_tex_dshift`, `pov_flat_dshift`, lump `POVX`).
+  - Variants: cell sides 10, own sides 8, wall sides 8, tower sides 6 (each in the east/west and the north/south
+    shade), ground 8 interiors x 4 edge states (a joint on the west edge, on the south edge, both, none), tops of
+    cell 6, own 4, wall 5, tower 4. A kind lists 16 weighted slots (`POVX`): the calm looks occur twice, the dense ones
+    once, so most faces are quiet and a few are nests.
+  - Choice: hash of the WORLD position of the cell (`origin` + window coordinates), the kind and the side
+    (`cell_hash`, murmur3 finaliser, `pov_control.c`): the four sides of a block may differ. An edge of the ground
+    has a joint or not by the hash of the edge, whichever cell is next to it. `origin <x> <y>` moves the world
+    position of the window (the SDK shifts the window by whole cells and sends the lines again): the looks of all
+    cells are assigned again; a cell keeps its look wherever it lies in the window (`tests.test_theme.Variants`).
+  - Forms (second channel for colour blindness): cell = machine/building block (plate joints, tinted plates, rivets,
+    vents, hatch, porthole, window rows, pipes, ducts, ladders, labels, hazard marks, lamps, dials, spalls, stains);
+    own = the same family in the accent colour with a framed plate and a diamond in every variant, on the top too;
+    wall = ashlar blocks in two or three courses under a coping band (slits, gratings, plaques); tower = a shaft
+    with a cornice, bands in their own colour, slits and a framed double door at the foot (the lowest 19 units show
+    the top rows of the texture again: a plinth). Ground = plates (tinted, a few light), joints, covers, hatches,
+    gutters, cracks, stains, scraps of paper, rubble.
+  - Colours: a role has at most three stages (surface, shade, fleck) plus navy for the lines; no grey, no gradient.
+    A fleck is an index of the same outline class as its surface: no outline around it (`theme_lump`).
+  - Lines are navy twin indices of the colour they lie on, three kinds, each folds into the surface in the COLORMAP
+    (`FOLD_Q` in `make_theme.py`; a row is about 1280 / distance below the start row): the core line (one texel, half a
+    unit) is drawn up to 128 units on the floor and 320 on walls; the halo (a second texel) is navy only between 80
+    and 128 units (floor) and 160 and 320 (walls), so far away the coarse lines are two texels (one unit) and keep
+    about the weight of the outline; fine things (rivets, scraps, cracks) fold at 80 and 160 units. Small flecks
+    (small stains, scraps) use a second index that the COLORMAP maps to the surface from 128 (floor) and 320
+    (walls) units on, so that no speck flickers when the camera moves.
+  - Why 2 texels to the unit: measured at 672 x 324 a unit is 2.62 points at 128 units, 1.30 at 256; at 1280 x 640 it
+    is 4.99 and 2.49 (`out/muster-detail`, see the report in the commit message). One texel a unit made a detail
+    line 2.6 points thick near a block at 672 wide (the outline is 1 point); two texels give 1.3, and 2.5 points at
+    1280 (outline 2). Four would be below a point from 128 units on at 672 and cost four times the memory.
+  - Engine: `R_DrawColumnTall` (rows masked with 255) for walls, `R_DrawSpanFine` takes the flat geometry from
+    `pov_flat_bits` / `pov_flat_dshift`; `r_segs.c` scales the texture column, the row start and the step by
+    `pov_tex_dshift`. Without a theme, or with a theme without `POVX`, nothing changes (hashes of the pictures of
+    `81fb3a0` are a test).
 - Kind `own` (row character `O`): a cell of the viewer's own, same height as `cell`.
 - Sprites (things) are still the IWAD's and are wrong in a theme's palette: samples show no things.
 - Upstream fixes needed by a theme (marked `// cosmergon-pov:`): `p_spec.c` (an animated flat that the
@@ -239,7 +273,8 @@ dimming with distance, flat wall textures per kind and direction, floors, a sky,
   `p_switch.c` (switch textures missing from a theme are skipped).
 - Samples: `python3 tools/theme_samples.py` writes `out/muster/` (nine pictures, the comparison and the
   overview); `--size 672x324` the same in that size with the size in every file name, `--fine` writes
-  672 x 324 and 1280 x 640 to `out/muster-fein/`. Tests: `python3 -m unittest tests.test_theme`.
+  672 x 324 and 1280 x 640 to `out/muster-fein/`, `--detail` writes `out/muster-detail/` (six viewpoints in A and B,
+  both sizes, the overview of A/B/C and the texture sheets). Tests: `python3 -m unittest tests.test_theme`.
 
 ## Picture size (package P5)
 
@@ -298,7 +333,8 @@ views: identical hashes).
   `out/muster-fein`, 1 point is delicate at 1280 (0.16 percent of the height) and the same weight as the
   old line at 672 x 324 (0.31 percent); 2 points at 1280 x 640 have it. The second point grows into the
   surface the first one lies in (same class), so the line stays outside the faces.
-- **Themes:** joints are 1 texel; they vanish at 1280 / (q + 1) units (`FOLD_Q`: floor 7 = 160 units, walls
+- **Themes:** (the numbers below are from before package P6; for the lines of the variants see "Themes")
+  joints are 1 texel; they vanish at 1280 / (q + 1) units (`FOLD_Q`: floor 7 = 160 units, walls
   3 = 320). A 1 texel line across the view (a floor joint) is thinner than one row beyond
   sqrt(eye height * w / 2) units (41 units: 117 at 672 wide); beyond that it breaks into dashes
   (looked at: fold 213 shows dashes at 672, 160 is clean). Wall seams are wider than a point up to
@@ -308,14 +344,18 @@ views: identical hashes).
 ### Measured (`python3 tools/measure_size.py`, 400 pictures, 3 runs, this machine, ms per picture
 without writing it: control lines, renderer, outline, conversion to RGB)
 
-| Size | Theme | Mean | Slowest |
-|---|---|---|---|
-| 320 x 200 (default, shown 640 x 400) | none | 0.54 | 2.19 |
-| 320 x 200 | wueste | 1.13 | 3.08 |
-| 672 x 324 | none | 1.13 | 3.25 |
-| 672 x 324 | wueste | 2.99 | 5.65 |
-| 1280 x 800 | none | 4.40 | 7.64 |
-| 1280 x 800 | wueste | 13.80 | 25.11 |
+| Size | Theme | Mean | Slowest | Mean before P6 | Slowest before P6 |
+|---|---|---|---|---|---|
+| 320 x 200 (default, shown 640 x 400) | none | 0.55 | 2.44 | 0.54 | 2.41 |
+| 320 x 200 | wueste | 1.78 | 4.41 | 1.13 | 3.17 |
+| 672 x 324 | none | 1.12 | 3.02 | 1.10 | 2.79 |
+| 672 x 324 | wueste | 4.03 | 7.49 | 3.01 | 5.85 |
+| 1280 x 800 | none | 4.41 | 8.39 | 4.44 | 7.48 |
+| 1280 x 800 | wueste | 15.47 | 25.06 | 13.69 | 23.59 |
+
+(Re-measured 2026-11-21 with the scene of before, `scene(rich=False)`, `tools/measure_size.py`; the themed pictures cost
+more by the 256 texel textures and the span drawer's wider flats; without a theme the fast span loop of before is
+kept, `R_DrawSpanFine`.)
 
 The step at 35 a second is 28.6 ms. Memory: 134 MB of address space (the visplane array), 22 MB resident
 at 1280 x 800.

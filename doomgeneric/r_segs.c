@@ -196,8 +196,14 @@ R_RenderMaskedSegRange
 #define HEIGHTBITS		12
 #define HEIGHTUNIT		(1<<HEIGHTBITS)
 
+// cosmergon-pov: texels to the unit of the wall textures is 1 << pov_tex_dshift (a theme draws 256 x 256
+// textures over a 128 unit cell edge: two texels a unit, rows masked with 255). Default 0: upstream.
+int pov_tex_dshift = 0;
+
 void R_RenderSegLoop (void)
 {
+    const int dmul = 1 << pov_tex_dshift;
+    void (*const wallcol) (void) = pov_tex_dshift ? R_DrawColumnTall : colfunc;
     angle_t		angle;
     unsigned		index;
     int			yl;
@@ -255,7 +261,7 @@ void R_RenderSegLoop (void)
 	    // calculate texture offset
 	    angle = (rw_centerangle + xtoviewangle[rw_x])>>ANGLETOFINESHIFT;
 	    texturecolumn = rw_offset-FixedMul(finetangent[angle],rw_distance);
-	    texturecolumn >>= FRACBITS;
+	    texturecolumn >>= (FRACBITS - pov_tex_dshift);
 	    // calculate lighting
 	    index = R_LightIndex(rw_scale, LIGHTSCALESHIFT);
 
@@ -264,7 +270,7 @@ void R_RenderSegLoop (void)
 
 	    dc_colormap = walllights[index];
 	    dc_x = rw_x;
-	    dc_iscale = 0xffffffffu / (unsigned)rw_scale;
+	    dc_iscale = (0xffffffffu / (unsigned)rw_scale) * (unsigned)dmul;
 	}
         else
         {
@@ -279,9 +285,9 @@ void R_RenderSegLoop (void)
 	    // single sided line
 	    dc_yl = yl;
 	    dc_yh = yh;
-	    dc_texturemid = rw_midtexturemid;
+	    dc_texturemid = rw_midtexturemid * dmul;
 	    dc_source = R_GetColumn(midtexture,texturecolumn);
-	    colfunc ();
+	    wallcol ();
 	    ceilingclip[rw_x] = viewheight;
 	    floorclip[rw_x] = -1;
 	}
@@ -301,9 +307,9 @@ void R_RenderSegLoop (void)
 		{
 		    dc_yl = yl;
 		    dc_yh = mid;
-		    dc_texturemid = rw_toptexturemid;
+		    dc_texturemid = rw_toptexturemid * dmul;
 		    dc_source = R_GetColumn(toptexture,texturecolumn);
-		    colfunc ();
+		    wallcol ();
 		    ceilingclip[rw_x] = mid;
 		}
 		else
@@ -330,10 +336,10 @@ void R_RenderSegLoop (void)
 		{
 		    dc_yl = mid;
 		    dc_yh = yh;
-		    dc_texturemid = rw_bottomtexturemid;
+		    dc_texturemid = rw_bottomtexturemid * dmul;
 		    dc_source = R_GetColumn(bottomtexture,
 					    texturecolumn);
-		    colfunc ();
+		    wallcol ();
 		    floorclip[rw_x] = mid;
 		}
 		else

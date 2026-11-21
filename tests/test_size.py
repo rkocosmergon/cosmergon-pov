@@ -192,32 +192,34 @@ EYE = 41
 HEIGHT = 128
 
 
-def colour_box(frame, rgb):
-    """Bounding box (x0, y0, x1, y1) of the points of one colour (None when there is none)."""
+def colour_box(frame, colours):
+    """Bounding box (x0, y0, x1, y1) of the points of one colour or of any of several (None when there is none)."""
     w, h = size_of(frame)
     head = len(re.match(rb"P6\n\d+ \d+\n255\n", frame).group(0))
-    pattern = bytes(rgb)
+    patterns = [bytes(c) for c in ([colours] if isinstance(colours[0], int) else colours)]
     xs, ys = [], []
     for y in range(h):
         row = frame[head + 3 * y * w: head + 3 * (y + 1) * w]
-        x = row.find(pattern)
-        while x >= 0:
-            if x % 3 == 0:
-                xs.append(x // 3)
-                ys.append(y)
-            x = row.find(pattern, x + 1)
+        for pattern in patterns:
+            x = row.find(pattern)
+            while x >= 0:
+                if x % 3 == 0:
+                    xs.append(x // 3)
+                    ys.append(y)
+                x = row.find(pattern, x + 1)
     return (min(xs), min(ys), max(xs), max(ys)) if xs else None
 
 
 class Aspect(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # the theme "wueste": flat colours, so the face of the cell is one colour (the lines lie
-        # outside of it: a surface keeps its area) and its bounding box is the face itself
+        # the theme "wueste": flat colours; the face of the cell is its two stages (surface and fleck; the lines
+        # of the drawing are navy, the outline lies outside of it) and the bounding box of both is the face itself
         cls.theme = os.path.join(WORK.name, "aspect.wad")
         with open(cls.theme, "wb") as handle:
             handle.write(make_theme.wad_bytes(make_theme.build_theme("wueste")))
-        cls.colour = make_theme.hexrgb(make_theme.THEMES["wueste"]["cell"])
+        theme = make_theme.THEMES["wueste"]
+        cls.colour = (make_theme.hexrgb(theme["cell"]), make_theme.hexrgb(theme["cell_shade"]))
 
     def measure(self, w, h, distance_cells):
         """The face of a 128 x 128 x 128 cell seen from `distance_cells` * 128 units straight on:

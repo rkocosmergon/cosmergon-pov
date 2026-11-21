@@ -17,6 +17,7 @@
 #define POVC_MAX_THINGS 256         // ids 0..255
 #define POVC_MAX_LINE   255         // bytes per line, without the newline
 #define POVC_MAX_NEXT   1000000     // frames per `next`
+#define POVC_MAX_ORIGIN 1000000     // `origin`: world coordinate of cell 0, 0, within +-this
 #define POVC_MAX_MSGS   20          // rejection messages on stderr
 
 // True when the command line has -pov-control. Everything below is inert without it.

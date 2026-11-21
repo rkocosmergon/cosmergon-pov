@@ -111,7 +111,9 @@ int			dccount;
 unsigned short *pov_idbuf = NULL;
 unsigned short pov_wall_id = 0;
 
-void R_DrawColumn (void) 
+// cosmergon-pov: the column drawer takes the row mask of the texture (127: textures 128 high, as
+// upstream; 255: themed wall textures 256 high at two texels a unit, pov_control.c theme_init).
+static inline void draw_column (const int mask)
 { 
     int			count; 
     byte*		dest; 
@@ -155,7 +157,7 @@ void R_DrawColumn (void)
     {
 	// Re-map color indices from wall texture column
 	//  using a lighting/special effects LUT.
-	*dest = dc_colormap[dc_source[(frac>>FRACBITS)&127]];
+	*dest = dc_colormap[dc_source[(frac>>FRACBITS)&mask]];
 	if (idp != NULL)
 	{
 	    *idp = pov_wall_id;
@@ -167,6 +169,17 @@ void R_DrawColumn (void)
 	
     } while (count--); 
 } 
+
+
+void R_DrawColumn (void)
+{
+    draw_column (127);
+}
+
+void R_DrawColumnTall (void)
+{
+    draw_column (255);
+}
 
 
 
@@ -738,6 +751,10 @@ void R_DrawSpan (void)
 #endif
 
 
+// cosmergon-pov: flat geometry of the theme (pov_control.c theme_init)
+int pov_flat_bits = 6;
+int pov_flat_dshift = 0;
+
 //
 // cosmergon-pov: R_DrawSpan keeps the position and the step of the texture in two 16 bit fields of
 // 6.10 bits each. The step is cut to 1/1024 texel; over a 1280 point wide span that adds up to more
@@ -747,10 +764,15 @@ void R_DrawSpan (void)
 //
 void R_DrawSpanFine (void)
 {
-    uint32_t xfrac = (uint32_t)ds_xfrac;
-    uint32_t yfrac = (uint32_t)ds_yfrac;
-    uint32_t xstep = (uint32_t)ds_xstep;
-    uint32_t ystep = (uint32_t)ds_ystep;
+    // a themed floor has pov_flat_dshift more texel bits to the unit and a flat of 2^pov_flat_bits
+    // a side (default: 64 x 64, one texel a unit: the original)
+    const int dshift = pov_flat_dshift;
+    const int bits = pov_flat_bits;
+    const uint32_t mask = (1u << bits) - 1u;
+    uint32_t xfrac = (uint32_t)ds_xfrac << dshift;
+    uint32_t yfrac = (uint32_t)ds_yfrac << dshift;
+    uint32_t xstep = (uint32_t)ds_xstep << dshift;
+    uint32_t ystep = (uint32_t)ds_ystep << dshift;
     byte *dest;
     int count;
 
@@ -768,9 +790,22 @@ void R_DrawSpanFine (void)
     dest = ylookup[ds_y] + columnofs[ds_x1];
     count = ds_x2 - ds_x1;
 
+    if (dshift == 0 && bits == 6)
+    {
+	// the original: 64 x 64 flats, one texel a unit (constants: the fast loop)
+	do
+	{
+	    int spot = (int)(((yfrac >> 10) & 4032) | ((xfrac >> 16) & 63));
+
+	    *dest++ = ds_colormap[ds_source[spot]];
+	    xfrac += xstep;
+	    yfrac += ystep;
+	} while (count--);
+	return;
+    }
     do
     {
-	int spot = (int)(((yfrac >> 10) & 4032) | ((xfrac >> 16) & 63));
+	int spot = (int)((((yfrac >> 16) & mask) << bits) | ((xfrac >> 16) & mask));
 
 	*dest++ = ds_colormap[ds_source[spot]];
 	xfrac += xstep;

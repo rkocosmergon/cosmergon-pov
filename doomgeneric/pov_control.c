@@ -95,8 +95,13 @@ static unsigned long s_rejected = 0;
 static int s_summary_done = 0;
 
 static unsigned char s_kind_of[POVC_CELLS];
-static short s_texnum[K_COUNT][2];   // [kind][0 = edge facing east/west, 1 = north/south]
-static short s_flatnum[K_COUNT];
+// Variants (a theme with a POVX lump, see theme_init): which look a cell wears is picked from its WORLD
+// position, so it stays the same when the 48 x 48 window moves over the field (`origin` line).
+#define POV_SLOTS 16
+static short s_texnum[K_COUNT][POV_SLOTS][2];   // [kind][slot][0 = edge facing east/west, 1 = north/south]
+static short s_flatnum[K_COUNT][POV_SLOTS][4];  // [kind][slot][edge bits: 1 = joint on the west edge, 2 = on the south edge]
+static int s_origin_x = 0;               // world coordinates of cell 0, 0 of the window
+static int s_origin_y = 0;
 static short s_facing[POVC_CELLS][4];    // side index of the cell's sidedef facing east/west/north/south
 
 typedef struct
@@ -246,6 +251,22 @@ static int opposite(int d)
     return d ^ 1;
 }
 
+// Hash of a world cell, a salt tells the uses apart (murmur3 finaliser; the same on every machine).
+static unsigned mix32(unsigned h)
+{
+    h ^= h >> 16;
+    h *= 0x85EBCA6Bu;
+    h ^= h >> 13;
+    h *= 0xC2B2AE35u;
+    h ^= h >> 16;
+    return h;
+}
+
+static unsigned cell_hash(int wx, int wy, unsigned salt)
+{
+    return mix32(mix32((unsigned)wx * 0x9E3779B1u + salt * 0x7FEB352Du) ^ ((unsigned)wy * 0x846CA68Bu + salt));
+}
+
 // Sets the kind of one cell: its floor height and flat, and the lower texture on the sidedef of
 // each neighbour that faces it. The wall texture of a step is the lower texture of the sidedef
 // on the LOWER side (r_segs.c R_StoreWallRange: the seg's own sidedef, drawn when the back floor
@@ -255,16 +276,27 @@ static void set_kind(int cell, int kind)
     int d;
     sector_t *sector = &sectors[cell];
 
+    const int wx = s_origin_x + cell % POVC_GRID;
+    const int wy = s_origin_y + cell / POVC_GRID;
+    int edges = 0;
+
     s_kind_of[cell] = (unsigned char)kind;
     sector->floorheight = s_kind[kind].height * FRACUNIT;
-    sector->floorpic = s_flatnum[kind];
+    if (kind == K_EMPTY)
+    {
+        // the floor joints sit on edges: an edge has a joint or not, whichever cell is next to it
+        edges = (cell_hash(wx, wy, 100) >> 9 & 1) | ((cell_hash(wx, wy, 101) >> 9 & 1) << 1);
+    }
+    sector->floorpic = s_flatnum[kind][cell_hash(wx, wy, (unsigned)kind * 8 + 7) >> 8 & (POV_SLOTS - 1)][edges];
     for (d = 0; d < 4; d++)
     {
         int other = neighbour(cell, d);
 
         if (other >= 0)
         {
-            sides[s_facing[other][opposite(d)]].bottomtexture = s_texnum[kind][d >> 1];
+            unsigned slot = cell_hash(wx, wy, (unsigned)kind * 8 + (unsigned)d) >> 8 & (POV_SLOTS - 1);
+
+            sides[s_facing[other][opposite(d)]].bottomtexture = s_texnum[kind][slot][d >> 1];
         }
     }
     s_dirty = 1;
@@ -358,7 +390,7 @@ static void commit(void)
 // ---------------------------------------------------------------------------------------
 // Parser: one line -> one validated command. Nothing is applied before the whole line is valid.
 // ---------------------------------------------------------------------------------------
-typedef enum { OP_CELL, OP_ROW, OP_THING, OP_GONE, OP_CAM, OP_LIGHT, OP_NEXT, OP_SIZE, OP_QUIT } op_t;
+typedef enum { OP_CELL, OP_ROW, OP_THING, OP_GONE, OP_CAM, OP_LIGHT, OP_NEXT, OP_SIZE, OP_ORIGIN, OP_QUIT } op_t;
 
 typedef struct
 {
@@ -686,6 +718,20 @@ static const char *parse_line(const unsigned char *line, size_t len, command_t *
         }
         return NULL;
     }
+    if (strcmp(tok[0], "origin") == 0)
+    {
+        if (ntok != 3)
+        {
+            return "origin needs <x> <y>";
+        }
+        c->op = OP_ORIGIN;
+        if (!parse_int(tok[1], -POVC_MAX_ORIGIN, POVC_MAX_ORIGIN, &c->a)
+            || !parse_int(tok[2], -POVC_MAX_ORIGIN, POVC_MAX_ORIGIN, &c->b))
+        {
+            return "origin must be integers within +-1,000,000";
+        }
+        return NULL;
+    }
     if (strcmp(tok[0], "quit") == 0)
     {
         if (ntok != 1)
@@ -739,6 +785,14 @@ static void apply(const command_t *c)
         break;
     case OP_SIZE:
         POV_ControlRequestSize(c->a, c->b);
+        break;
+    case OP_ORIGIN:
+        s_origin_x = c->a;
+        s_origin_y = c->b;
+        for (i = 0; i < POVC_CELLS; i++)
+        {
+            set_kind(i, s_kind_of[i]);      // the variants follow the world position
+        }
         break;
     case OP_QUIT:
         s_quit = 1;
@@ -916,6 +970,111 @@ static void theme_init(void)
     }
 }
 
+// The variants of a theme (lump POVX, optional; without it every kind has the one look named in s_kind):
+//   0..3 "POVX", 4 version (1), 5 texel bits to the unit of the wall textures (0 or 1), 6 side of a
+//   flat in bits (6 or 8), 7 flat texel bits to the unit (0..2);
+//   then for the empty cell 16 slots of 4 flat names (8 bytes, zero padded; joint on west/south edge),
+//   then for cell, wall, tower, own: 16 slots of 2 wall texture names (east/west, north/south)
+//   followed by 16 flat names (the top face). A slot is picked from the world position of a cell
+//   (set_kind); a theme repeats a look in several slots to make it more frequent.
+#define POVX_LUMP_SIZE (8 + POV_SLOTS * 4 * 8 + 4 * (POV_SLOTS * 2 * 8 + POV_SLOTS * 8))
+
+static short name_flat(const unsigned char *p)
+{
+    char buf[9];
+
+    memcpy(buf, p, 8);
+    buf[8] = '\0';
+    return flat_num(buf);
+}
+
+static short name_tex(const unsigned char *p)
+{
+    char buf[9];
+
+    memcpy(buf, p, 8);
+    buf[8] = '\0';
+    return tex_num(buf);
+}
+
+static void variants_init(void)
+{
+    int k, s, e;
+    int lump = W_CheckNumForName("POVX");
+    const int have_x = s_theme_on && lump >= 0;
+    const unsigned char *data, *q;
+    static const int order[4] = { K_CELL, K_WALL, K_TOWER, K_OWN };
+
+    // one look per kind (the original, without a theme: byte for byte the old pictures); a theme with
+    // variants only needs the plain faces of the empty cell here
+    for (k = 0; k < K_COUNT; k++)
+    {
+        short fl = 0;
+        short tx, ty;
+
+        if (have_x && k != K_EMPTY)
+        {
+            continue;
+        }
+        tx = tex_num(s_theme_on ? s_kind[k].theme_x : s_kind[k].lower);
+        ty = tex_num(s_theme_on ? s_kind[k].theme_y : s_kind[k].lower);
+        if (!have_x)
+        {
+            fl = flat_num(s_kind[k].flat);
+        }
+        for (s = 0; s < POV_SLOTS; s++)
+        {
+            s_texnum[k][s][0] = tx;
+            s_texnum[k][s][1] = ty;
+            for (e = 0; e < 4; e++)
+            {
+                s_flatnum[k][s][e] = fl;
+            }
+        }
+    }
+    if (!have_x)
+    {
+        return;
+    }
+    if (W_LumpLength(lump) != POVX_LUMP_SIZE)
+    {
+        I_Error("pov-control: POVX must be %d bytes, it has %d", POVX_LUMP_SIZE, W_LumpLength(lump));
+    }
+    data = W_CacheLumpNum(lump, PU_STATIC);
+    if (memcmp(data, "POVX", 4) != 0 || data[4] != 1 || data[5] > 1 || (data[6] != 6 && data[6] != 8) || data[7] > 2)
+    {
+        I_Error("pov-control: POVX has the wrong magic, version or geometry");
+    }
+    pov_tex_dshift = data[5];
+    pov_flat_bits = data[6];
+    pov_flat_dshift = data[7];
+    q = data + 8;
+    for (s = 0; s < POV_SLOTS; s++)
+    {
+        for (e = 0; e < 4; e++, q += 8)
+        {
+            s_flatnum[K_EMPTY][s][e] = name_flat(q);
+        }
+    }
+    for (k = 0; k < 4; k++)
+    {
+        int kind = order[k];
+
+        for (s = 0; s < POV_SLOTS; s++, q += 16)
+        {
+            s_texnum[kind][s][0] = name_tex(q);
+            s_texnum[kind][s][1] = name_tex(q + 8);
+        }
+        for (s = 0; s < POV_SLOTS; s++, q += 8)
+        {
+            for (e = 0; e < 4; e++)
+            {
+                s_flatnum[kind][s][e] = name_flat(q);
+            }
+        }
+    }
+}
+
 static int is_edge(int p, int q)
 {
     unsigned char a = s_shot[p], b = s_shot[q];
@@ -1009,7 +1168,7 @@ static void outline_pass(void)
 
 static void init_world(void)
 {
-    int i, d, k;
+    int i, d;
     mobj_t *mo;
 
     if (numsectors != POVC_CELLS || numsubsectors != POVC_CELLS)
@@ -1063,12 +1222,7 @@ static void init_world(void)
         }
     }
     theme_init();
-    for (k = 0; k < K_COUNT; k++)
-    {
-        s_texnum[k][0] = tex_num(s_theme_on ? s_kind[k].theme_x : s_kind[k].lower);
-        s_texnum[k][1] = tex_num(s_theme_on ? s_kind[k].theme_y : s_kind[k].lower);
-        s_flatnum[k] = flat_num(s_kind[k].flat);
-    }
+    variants_init();
     // Whatever pattern the map was generated with: start with everything empty.
     for (i = 0; i < POVC_CELLS; i++)
     {

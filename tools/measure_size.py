@@ -32,8 +32,8 @@ SIZES = (("320x200 (default, shown 640x400)", None), ("672x324", "672x324"), ("1
 
 
 def lines(frames: int) -> str:
-    out = ["cell %d %d %s" % c for c in theme_samples.scene()]
-    views = theme_samples.VIEWS
+    out = ["cell %d %d %s" % c for c in theme_samples.scene(rich=False)]
+    views = theme_samples.VIEWS_BASIC
     for i in range(frames):
         t = i / frames * len(views)
         a, b = views[int(t) % len(views)], views[(int(t) + 1) % len(views)]

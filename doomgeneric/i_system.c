@@ -57,13 +57,15 @@
 
 // cosmergon-pov: upstream 6 MiB plus the level data of the 48 x 48 map, which stays in the
 // zone (about 2.3 MiB: reject 0.63, segs 0.49, lines 0.39, sectors 0.28, sides 0.21, rest 0.3;
-// sizes from COSMERGON.md), rounded up to 9. Zone overflow ends in Z_Malloc's I_Error.
+// sizes from COSMERGON.md), rounded up to 9; a theme with variants adds up to 64 wall textures of 256 x 256
+// (a 64 KiB composite and two 34 KiB patches each) and 52 flats of 64 KiB, all of them purgeable
+// but kept while in view: 24 MiB leaves room for all in one picture. Zone overflow ends in Z_Malloc's I_Error.
 #ifdef POV_UPSTREAM_LIMITS
 #define DEFAULT_RAM 6 /* MiB */
 #define MIN_RAM     6  /* MiB */
 #else
-#define DEFAULT_RAM 9 /* MiB */
-#define MIN_RAM     9  /* MiB */
+#define DEFAULT_RAM 24 /* MiB */
+#define MIN_RAM     24  /* MiB */
 #endif
 
 

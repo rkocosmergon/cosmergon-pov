@@ -14,6 +14,7 @@ A theme replaces, for the program, everything the picture is coloured from:
             joints on the west/south edge or not (LE<variant><edges>), the tops of the kinds (LC.., LO.., LW.., LT..)
   POVTHEME  switches, the light level of all sectors, class and rank of each colour index for
             the outline pass (pov_control.c)
+  POVINK    per stroke index the colour a thinned point is set back to, and whether it is a floor stroke
   POVX      the geometry (texels to the unit) and 16 weighted slots of variants per kind; the engine picks a
             slot from the WORLD position of a cell (pov_control.c, `origin` line)
 Load with `-pov-theme <file>` (the file is added after the map, its lumps win). The theme's own
@@ -26,17 +27,15 @@ the same in every theme; a block has three faces (top, side east/west, side nort
 the faces differ in their palette entry (so the outline pass can tell them apart) even where the colour is
 the same.
 
-Lines are drawn into the pictures with "twin" indices (navy, one per surface colour and kind of line:
-core, halo, fine). The engine picks the COLORMAP row from the distance; with the light level LIGHT a
-surface starts at row S (floors S, walls whose edge runs along y: S - 4, along x: S + 4, r_segs.c) and the
-row is S - 1280 / distance (r_draw, r_plane, r_main light tables). From a row on, a twin maps to the colour
-of its surface: the line is drawn up to 1280 / (q + 1) units and vanishes beyond (FOLD_Q). A line is one
-texel (half a unit) near the viewer; a second texel, the halo, is navy only between its own two
-distances, so far away the coarse lines are two texels (one unit) and keep about the weight of the
-outline (one point, two from 901 wide), while the fine things (rivets, scraps, cracks) fold away earlier.
-A joint across the view on the floor is thinner than one picture row beyond sqrt(eye height * w / 2 * t)
-units for a line t units thick; the floor folds at 160 units (looked at in 672 x 324). The light index of a
-wall is normalised to a 320 wide picture in the engine, so these distances hold at every picture size.
+Strokes are drawn into the pictures with "twin" indices (navy, one per surface colour and width: fine, core,
+wide). The engine picks the COLORMAP row from the distance; with the light level LIGHT a surface starts at row S
+(floors S, walls whose edge runs along y: S - 4, along x: S + 4, r_segs.c) and the row is S - 1280 / distance (r_draw,
+r_plane, r_main light tables). From a row on, a twin maps to the colour of its surface: the stroke is drawn up to
+1280 / (q + 1) units and vanishes beyond (FOLD_Q). The width in the texture decides how far it is seen; the engine
+thins it on the picture to the width of the outline (POVINK lump, pov_control.c ink_pass). A joint across the view
+on the floor is thinner than one picture row beyond sqrt(eye height * w / 2 * t) units for a line t units thick;
+the engine drops such strokes there. The light index of a wall is normalised to a 320 wide picture in the engine,
+so these distances hold at every picture size.
 """
 
 from __future__ import annotations
@@ -68,10 +67,14 @@ LIGHT = 160                  # light level of all sectors: lightnum 10, colormap
 
 # When the lines of a surface fold into its colour, as q: the COLORMAP row S + offset - q (S the start row
 # of the light level, offset by the orientation) and beyond; a row is about 1280 / distance rows below S, so
-# a line folds at 1280 / (q + 1) units. Per orientation: core, halo start, fine.
-#   floor: core 128 units; the halo (second texel) joins from 80 units; fine things fold at 80 units
-#   walls: core 320 units; the halo joins from 160 units; fine things fold at 160 units
-FOLD_Q = {"floor": (9, 15, 15), "x": (3, 7, 7), "y": (3, 7, 7)}
+# a line folds at 1280 / (q + 1) units. Per orientation: core (two texels), wide (four texels), fine (one).
+# The engine thins every stroke on the picture to the width of the outline (ink_pass), so the width in the
+# picture decides how far a line can still be seen, not how thick it looks: a wide stroke is a 2 unit band
+# that stays at least a point wide to about 640 units.
+#   floor: wide 640 units; core 128 units; fine things fold at 80 units
+#   walls: wide 640 units; core 320 units; fine things fold at 160 units
+FOLD_Q = {"floor": (9, 1, 15), "x": (3, 1, 7), "y": (3, 1, 7)}
+FAR_Q = 2                                   # the tints of the ground fold into the ground (floor 427 units)
 SMALL_Q = {"floor": 9, "x": 3, "y": 3}      # small flecks fold into their surface (floor 128 units, walls 320)
 OFFSET = {"floor": 0, "x": -4, "y": 4}      # vertical edges (x const) get lightnum + 1, along x lightnum - 1
 
@@ -79,7 +82,7 @@ SHADE = 0.88
 
 BASES = art.BASES
 TWIN_OF = {b: art.TW[b][0] for b, _o in BASES}        # base -> its core twin
-HALO_OF = {b: art.TW[b][1] for b, _o in BASES}
+WIDE_OF = {b: art.TW[b][1] for b, _o in BASES}
 FINE_OF = {b: art.TW[b][2] for b, _o in BASES}
 
 
@@ -103,7 +106,7 @@ THEMES = {
         "ground": "#ecd9a8", "border": "#d6b574",
         "cell": "#5ab4d8", "cell_shade": "#4a9cc4",
         "own": "#e8c547", "wall": "#c86b3a",
-        "tower": "#f6f0e0", "band": "#c86b3a", "tower_top": "#c86b3a",
+        "tower": "#7a52a8", "band": "#f0c850", "tower_top": "#a284cc",
         "disc": "#fffaea", "cloud": "#ffffff",
     },
     "gelbestadt": {
@@ -112,7 +115,7 @@ THEMES = {
         "ground": "#efe4bc", "border": "#d9c68e",
         "cell": "#6aa6d6", "cell_shade": "#4a88c4",
         "own": "#e8843a", "wall": "#dcb25a",
-        "tower": "#f8f2de", "band": "#c8683a", "tower_top": "#c8683a",
+        "tower": "#7e5cae", "band": "#f2b84a", "tower_top": "#a68ad0",
         "disc": "#fff6d0", "cloud": "#fffdf2",
     },
     "blaustadt": {
@@ -121,7 +124,7 @@ THEMES = {
         "ground": "#cfdbe8", "border": "#b0c3d8",
         "cell": "#8fb4de", "cell_shade": "#6f98cc",
         "own": "#ff8a2a", "wall": "#5b86bf",
-        "tower": "#e6eef8", "band": "#3f6aa8", "tower_top": "#3f6aa8",
+        "tower": "#6c3f96", "band": "#f0c850", "tower_top": "#9470bc",
         "disc": "#ffffff", "cloud": "#ffffff",
     },
 }
@@ -197,10 +200,10 @@ def navy_rows() -> dict[int, tuple[int, int]]:
     start = (15 - (LIGHT >> 4)) * 4
     out = {}
     for base, orient in BASES:
-        q_core, q_halo, q_fine = FOLD_Q[orient]
+        q_core, q_wide, q_fine = FOLD_Q[orient]
         row = start + OFFSET[orient]
         out[art.TW[base][0]] = (0, row - q_core)
-        out[art.TW[base][1]] = (row - q_halo, row - q_core)
+        out[art.TW[base][1]] = (0, row - q_wide)
         out[art.TW[base][2]] = (0, row - q_fine)
     return out
 
@@ -215,6 +218,8 @@ def colormap(pal) -> bytes:
         for twin, (lo, hi) in windows.items():
             if not (lo <= row < hi):
                 table[twin] = base_of[twin]
+        if row >= start - FAR_Q:             # far away the ground is one calm plane: its tints are gone
+            table[I_GROUND_SHADE] = table[I_GROUND_LIGHT] = I_GROUND
         for small, surface in art.SURFACE_OF_SMALL.items():
             orient = art.ORIENT_OF[art.FLECK_OF_SMALL[small]]
             row_s = start + OFFSET[orient]
@@ -334,7 +339,7 @@ def surfaces() -> dict:
             flats[top_name(kind, v)] = b"".join(bytes(r) for r in c.g)
     for v, d in enumerate(GROUND_DENS):
         for edges in range(4):
-            c = art.Canvas(I_GROUND, I_GROUND_SHADE, I_GROUND_LIGHT, small_r=20)
+            c = art.Canvas(I_GROUND, I_GROUND_SHADE, I_GROUND_LIGHT, small_r=28)
             art.ground_flat(c, _rng("ground", v), d, edges)
             flats[ground_name(v, edges)] = b"".join(bytes(r) for r in c.g)
     return {"tex": tex, "flats": flats}
@@ -378,6 +383,18 @@ def theme_lump() -> bytes:
     return b"POVT" + bytes([1, 1, I_OUTLINE, LIGHT]) + bytes(cls) + bytes(rank)
 
 
+def povink_lump() -> bytes:
+    """The strokes for the thinning pass (pov_control.c ink_pass): version 1, then per colour index the index a
+    thinned stroke point is replaced by (0: not a stroke) and a flag (1: a stroke on a floor)."""
+    repl, floor = bytearray(256), bytearray(256)
+    for base, trio in art.TW.items():
+        for twin in trio:
+            repl[twin], floor[twin] = base, art.ORIENT_OF[base] == "floor"
+    for small, twin in art.SMALL_TWIN.items():
+        repl[twin], floor[twin] = small, art.ORIENT_OF[art.FLECK_OF_SMALL[small]] == "floor"
+    return b"POVK" + bytes([1, 0, 0, 0]) + bytes(repl) + bytes(floor)
+
+
 def povx_lump() -> bytes:
     """Geometry and the slots (see pov_control.c variants_init)."""
     out = bytearray(b"POVX" + bytes([1, 1, 8, 1]))
@@ -409,6 +426,7 @@ def build_theme(name: str) -> list[tuple[str, bytes]]:
     lumps: list[tuple[str, bytes]] = [
         ("POVTHEME", theme_lump()),
         ("POVX", povx_lump()),
+        ("POVINK", povink_lump()),
         ("POVSKY", povsky_lump()),
         ("POVCLD", sky_art.cloud_layer()),
         ("PLAYPAL", playpal(pals)),

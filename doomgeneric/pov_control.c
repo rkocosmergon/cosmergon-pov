@@ -89,9 +89,9 @@ static int s_ready = 0;
 static int s_done = 0;
 static int s_quit = 0;
 static int s_input_done = 0;             // end of input reached, no line left
-static int s_dirty = 0;
+static int s_dirty = 0;                  // changed since the last drawn frame
 static int s_live_t0 = 0;                // I_GetTimeMS at the start (the clouds' live clock)
-static long s_drift_drawn = 0;           // cloud drift in points of the last drawn picture                  // changed since the last drawn frame
+static long s_drift_drawn = 0;           // cloud drift in points of the last drawn picture
 static unsigned long s_pending = 0;      // frames still to draw for `next`
 static unsigned long s_lines = 0;
 static unsigned long s_rejected = 0;
@@ -270,6 +270,28 @@ static unsigned cell_hash(int wx, int wy, unsigned salt)
     return mix32(mix32((unsigned)wx * 0x9E3779B1u + salt * 0x7FEB352Du) ^ ((unsigned)wy * 0x846CA68Bu + salt));
 }
 
+// The long joints of the ground sit on cell edges. A joint runs along a line of cells (four in a row share the
+// decision, a zone of four by four cells says how many lines it has: calm zones and dense ones), with a gap
+// now and then; whichever cell is next to an edge, it is the cell on the east / north side that draws it.
+// Bit 1: a joint on the west edge, bit 2: on the south edge.
+static int ground_edges(int wx, int wy)
+{
+    static const int lines_of_zone[8] = { 1, 1, 2, 3, 3, 4, 5, 6 };      // of 8 lines per zone, by the zone's hash
+    const int zone = (int)(cell_hash(wx >> 2, wy >> 2, 103) >> 9 & 7);
+    const int have = lines_of_zone[zone];
+    int edges = 0;
+
+    if ((int)(cell_hash(wx, wy >> 2, 102) >> 9 & 7) < have && (cell_hash(wx, wy, 100) >> 9 & 7) != 0)
+    {
+        edges |= 1;
+    }
+    if ((int)(cell_hash(wx >> 2, wy, 104) >> 9 & 7) < have && (cell_hash(wx, wy, 101) >> 9 & 7) != 0)
+    {
+        edges |= 2;
+    }
+    return edges;
+}
+
 // Sets the kind of one cell: its floor height and flat, and the lower texture on the sidedef of
 // each neighbour that faces it. The wall texture of a step is the lower texture of the sidedef
 // on the LOWER side (r_segs.c R_StoreWallRange: the seg's own sidedef, drawn when the back floor
@@ -287,8 +309,7 @@ static void set_kind(int cell, int kind)
     sector->floorheight = s_kind[kind].height * FRACUNIT;
     if (kind == K_EMPTY)
     {
-        // the floor joints sit on edges: an edge has a joint or not, whichever cell is next to it
-        edges = (cell_hash(wx, wy, 100) >> 9 & 1) | ((cell_hash(wx, wy, 101) >> 9 & 1) << 1);
+        edges = ground_edges(wx, wy);
     }
     sector->floorpic = s_flatnum[kind][cell_hash(wx, wy, (unsigned)kind * 8 + 7) >> 8 & (POV_SLOTS - 1)][edges];
     for (d = 0; d < 4; d++)
@@ -975,6 +996,9 @@ static unsigned char s_outline_index = 0;
 static unsigned char s_class[256];
 static unsigned char s_rank[256];
 static unsigned char *s_shot = NULL;       // copy of the picture the outline is derived from
+static int s_ink_on = 0;                   // lump POVINK: the strokes are thinned on the picture (ink_pass)
+static unsigned char s_ink_repl[256];      // per colour index: what a thinned stroke point becomes (0: no stroke)
+static unsigned char s_ink_floor[256];     // 1: a stroke on a floor
 
 static void theme_init(void)
 {
@@ -1040,6 +1064,33 @@ static short name_tex(const unsigned char *p)
     memcpy(buf, p, 8);
     buf[8] = '\0';
     return tex_num(buf);
+}
+
+// The strokes of a theme (lump POVINK, optional): 0..3 "POVK", 4 version (1), 8..263 the index a thinned point of a
+// stroke becomes (0: the index is no stroke), 264..519 1 for a stroke on a floor. See ink_pass.
+#define POVINK_LUMP_SIZE 520
+
+static void ink_init(void)
+{
+    int lump = W_CheckNumForName("POVINK");
+    unsigned char *data;
+
+    if (!s_theme_on || lump < 0)
+    {
+        return;
+    }
+    if (W_LumpLength(lump) != POVINK_LUMP_SIZE)
+    {
+        I_Error("pov-control: POVINK must be %d bytes, it has %d", POVINK_LUMP_SIZE, W_LumpLength(lump));
+    }
+    data = W_CacheLumpNum(lump, PU_STATIC);
+    if (memcmp(data, "POVK", 4) != 0 || data[4] != 1)
+    {
+        I_Error("pov-control: POVINK has the wrong magic or version");
+    }
+    memcpy(s_ink_repl, data + 8, 256);
+    memcpy(s_ink_floor, data + 264, 256);
+    s_ink_on = 1;
 }
 
 static void variants_init(void)
@@ -1145,6 +1196,144 @@ static int is_edge(int p, int q)
 // samples, COSMERGON.md "Picture size"). At 320 points shown twice the line was 2 screen points.
 #define POV_OUTLINE_WIDE_FROM 901
 static int s_outline_width = 1;
+
+// Strokes drawn into a texture are 1, 2 or 4 texels wide; a texel is up to several points near the viewer, so
+// a stroke would be thicker than the outline. The thinning pass keeps of a stroke only `width` points (that of
+// the outline, 1 or 2) and sets the others back to the colour under the stroke. Which edge it keeps follows the
+// run lengths of a point (INK_CAP at most): a stroke that is longer across than up and down keeps its top rows,
+// any other its left columns; where both runs are long (a crossing, a corner, a big block) a point is kept when
+// either count is small. Floor strokes that run across the picture and are no thicker than the outline are
+// dropped altogether (a joint across the view is thinner than a point row from some distance on and would come
+// and go with every step of the camera; the whole run goes, judged by its thickest sampled point, so that no
+// dashes are left): only strokes that run into the depth reach far. Only stroke indices are touched; the counts
+// follow the picture as drawn, not the points already set back.
+#define INK_CAP 24
+static unsigned short s_ink_up[POV_MAX_W];
+
+static int ink_at(const unsigned char *buf, int p)
+{
+    return s_ink_repl[buf[p]] != 0;
+}
+
+// Number of stroke points below (x, y) (up to `limit`), in the rows not yet visited.
+static int ink_below(const unsigned char *buf, int x, int y, int w, int h, int limit)
+{
+    int k = 0;
+
+    while (k < limit && y + 1 + k < h && ink_at(buf, (y + 1 + k) * w + x))
+    {
+        k++;
+    }
+    return k;
+}
+
+// Length of the run of stroke points that starts at x in this row (at most `limit`).
+static int ink_run(const unsigned char *row, int x, int w, int limit)
+{
+    int n = 1;
+
+    while (n < limit && x + n < w && ink_at(row, x + n))
+    {
+        n++;
+    }
+    return n;
+}
+
+// A floor stroke run that is across the view and no thicker than `width`: its thickest sampled point.
+static int ink_run_is_sliver(int x, int y, int w, int h, int run, int width)
+{
+    int k;
+
+    if (run < 3)
+    {
+        return 0;
+    }
+    for (k = 0; k < run; k += 4)
+    {
+        if (s_ink_up[x + k] + 1 + ink_below(I_VideoBuffer, x + k, y, w, h, width) > width)
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+// A run of one or two stroke points on a floor with no stroke point in the rows above and below it (up_left: what
+// the row above had at x - 1): a speck, which would only be noise far away.
+static int ink_is_speck(int x, int y, int w, int h, int up_left, int run)
+{
+    int k;
+
+    if (run > 2 || up_left || (x + run < w && s_ink_up[x + run]) || y + 1 >= h)
+    {
+        return 0;
+    }
+    for (k = -1; k <= run; k++)
+    {
+        if (x + k < 0 || x + k >= w)
+        {
+            continue;
+        }
+        if ((k >= 0 && k < run && s_ink_up[x + k]) || ink_at(I_VideoBuffer, (y + 1) * w + x + k))
+        {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int ink_keep(int up, int left, int vert, int horz, int width)
+{
+    if (vert >= INK_CAP && horz >= INK_CAP)
+    {
+        return up < width || left < width;
+    }
+    return vert < horz ? up < width : left < width;
+}
+
+static void ink_pass(void)
+{
+    const int w = pov_view_w, h = pov_view_h;
+    const int width = w >= POV_OUTLINE_WIDE_FROM ? 2 : 1;
+    int x, y;
+
+    memset(s_ink_up, 0, sizeof(s_ink_up[0]) * (size_t)w);
+    for (y = 0; y < h; y++)
+    {
+        unsigned char *row = I_VideoBuffer + (size_t)y * w;
+        int left = 0, run = 0, sliver = 0, up_left = 0;
+
+        for (x = 0; x < w; x++)
+        {
+            unsigned char v = row[x];
+            unsigned char repl = s_ink_repl[v];
+            int up = s_ink_up[x], vert, horz;
+
+            if (repl == 0)
+            {
+                up_left = up;
+                s_ink_up[x] = 0;
+                left = 0;
+                continue;
+            }
+            if (left == 0)
+            {
+                run = ink_run(row, x, w, 64);
+                sliver = s_ink_floor[v] && (ink_run_is_sliver(x, y, w, h, run, width)
+                                            || ink_is_speck(x, y, w, h, up_left, run));
+            }
+            vert = up + 1 + ink_below(I_VideoBuffer, x, y, w, h, INK_CAP);
+            horz = left + ink_run(row, x, w, INK_CAP);
+            if (sliver || !ink_keep(up, left, vert, horz, width))
+            {
+                row[x] = repl;
+            }
+            up_left = up;
+            s_ink_up[x] = (unsigned short)(up < 60000 ? up + 1 : up);
+            left++;
+        }
+    }
+}
 
 // Lines on the finished picture (8 bit, before the palette): one point, on the side of the
 // lower rank, so a surface keeps its full area and the line sits outside of it. The picture is
@@ -1267,6 +1456,7 @@ static void init_world(void)
         }
     }
     theme_init();
+    ink_init();
     variants_init();
     POV_SkyLoad();
     // Whatever pattern the map was generated with: start with everything empty.
@@ -1324,6 +1514,10 @@ static void render_frame(void)
     if (POV_SkyActive())
     {
         s_drift_drawn = POV_SkyDriftPoints(pov_view_w);
+    }
+    if (s_ink_on)
+    {
+        ink_pass();
     }
     if (s_outline_on)
     {

@@ -6,6 +6,7 @@ Standard library only; starts the headless binary like tests.test_control.
 """
 
 import hashlib
+import math
 import os
 import struct
 import subprocess
@@ -67,38 +68,47 @@ class Generator(unittest.TestCase):
             self.assertEqual(len(lumps["COLORMAP"]), 34 * 256)
             self.assertEqual(len(lumps["POVTHEME"]), 520)
             self.assertEqual(len(lumps["POVX"]), 2056)
+            self.assertEqual(len(lumps["POVINK"]), 520)
             self.assertEqual(lumps["TEXTURE2"], struct.pack("<i", 0))
 
     def test_colormap_does_not_dim(self):
-        # every light row is the identity except the lines ("twins"), which fold to their surface
+        # every light row is the identity except the lines ("twins"), which fold to their surface, the small
+        # flecks and the two tints of the ground, which fold into the ground far away
         for name in make_theme.THEMES:
             pal = make_theme.build_palette(make_theme.THEMES[name])
             cm = make_theme.colormap(pal)
+            tints = (art.I_GROUND_SHADE, art.I_GROUND_LIGHT)
             for row in range(32):
                 for i in range(256):
-                    if i in art.TWIN_SET or i in art.SURFACE_OF_SMALL or i in art.SMALL_TWIN.values():
+                    if i in art.TWIN_SET or i in art.SURFACE_OF_SMALL or i in art.SMALL_TWIN.values() or i in tints:
                         continue
                     self.assertEqual(cm[row * 256 + i], i, (name, row, i))
+
+    def test_the_tints_of_the_ground_fold_away_far_out(self):
+        cm = make_theme.colormap(make_theme.build_palette(make_theme.THEMES["wueste"]))
+        for tint in (art.I_GROUND_SHADE, art.I_GROUND_LIGHT):
+            self.assertEqual(cm[tint], tint)                                  # near: a plate
+            self.assertEqual(cm[31 * 256 + tint], art.I_GROUND)               # far: the one calm ground
+            rows = [r for r in range(32) if cm[r * 256 + tint] == tint]
+            self.assertEqual(rows, list(range(len(rows))))
+            small = art.SMALL_OF[tint]
+            small_rows = [r for r in range(32) if cm[r * 256 + small] == small]
+            self.assertLess(len(small_rows), len(rows))                       # the small flecks go first
 
     def test_lines_fold_away_with_distance(self):
         pal = make_theme.build_palette(make_theme.THEMES["wueste"])
         cm = make_theme.colormap(pal)
-        for base, (core, halo, fine) in art.TW.items():
-            self.assertEqual(cm[core], core)                 # near: a line
-            self.assertEqual(cm[halo], base)                 # near: the second texel is not there yet
-            self.assertEqual(cm[fine], fine)
-            for twin in (core, halo, fine):
-                self.assertEqual(cm[31 * 256 + twin], base)  # far: the surface
+        for base, (core, wide, fine) in art.TW.items():
+            for twin in (core, wide, fine):
+                self.assertEqual(cm[twin], twin)                              # near: a line
+                self.assertEqual(cm[31 * 256 + twin], base)                   # far: the surface
                 self.assertEqual(pal[twin], make_theme.NAVY)
-            rows = [r for r in range(32) if cm[r * 256 + halo] == halo]
-            self.assertTrue(rows, base)                      # the halo shows between its two distances
-            self.assertEqual(rows, list(range(rows[0], rows[-1] + 1)))
-            self.assertGreater(rows[0], 0)
-            # the fine things fold no later than the coarse line, and the halo ends where the core ends
-            core_rows = [r for r in range(32) if cm[r * 256 + core] == core]
-            fine_rows = [r for r in range(32) if cm[r * 256 + fine] == fine]
-            self.assertLessEqual(len(fine_rows), len(core_rows))
-            self.assertEqual(rows[-1] + 1, core_rows[-1] + 1)
+            rows = {k: [r for r in range(32) if cm[r * 256 + t] == t] for k, t in (("core", core), ("wide", wide), ("fine", fine))}
+            for k, r in rows.items():
+                self.assertEqual(r, list(range(len(r))), (base, k))           # one distance, no window
+            # the small things fold first, then the medium line, the wide stroke is seen furthest
+            self.assertLessEqual(len(rows["fine"]), len(rows["core"]))
+            self.assertLess(len(rows["core"]), len(rows["wide"]))
 
     def test_small_flecks_fold_into_their_surface(self):
         pal = make_theme.build_palette(make_theme.THEMES["wueste"])
@@ -116,6 +126,17 @@ class Generator(unittest.TestCase):
             for row in range(32):
                 if cm[row * 256 + small] == surface:
                     self.assertEqual(cm[row * 256 + twin], surface)
+
+    def test_the_tower_has_a_strong_colour_of_its_own(self):
+        # a tower is no longer the palest thing in the picture: saturated, and far from every other role
+        for name, theme in make_theme.THEMES.items():
+            pal = make_theme.build_palette(theme)
+            tower = pal[art.I_ROLE["tower"]["x0"]]
+            hi, lo = max(tower), min(tower)
+            self.assertGreater((hi - lo) / hi, 0.35, name)
+            for other in ("cell", "own", "wall"):
+                self.assertGreater(math.dist(tower, pal[art.I_ROLE[other]["x0"]]), 60, (name, other))
+            self.assertGreater(math.dist(tower, pal[art.I_GROUND]), 100, name)
 
     def test_navy_is_not_black(self):
         self.assertNotEqual(make_theme.NAVY, (0, 0, 0))

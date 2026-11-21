@@ -14,6 +14,8 @@ License: GPL-2.0 (see `LICENSE`, unchanged).
 - `tools/theme_art.py`, `tools/make_theme.py`, `tools/theme_samples.py`: the themes and their samples ("Themes").
 - `doomgeneric/pov_sky.c`, `tools/sky_art.py`, `tools/theme_day.py`, `tests/test_sky.py`: the sky with the time of day and
   drifting clouds ("The sky").
+- `tools/measure_ink.py`, `tools/measure_far.py`, `tests/test_ink.py`: stroke thickness, reach of the floor strokes and the
+  calm of the far floor ("Themes").
 - `tests/test_headless.sh`: smoke test.
 - `tests/test_size.py`, `tools/measure_size.py`: picture size (package P5, "Picture size" below).
 - One upstream change: `doomgeneric/i_system.c` skips the zenity error dialog when
@@ -247,25 +249,42 @@ dimming with distance, flat wall textures per kind and direction, floors, a sky,
     position of the window (the SDK shifts the window by whole cells and sends the lines again): the looks of all
     cells are assigned again; a cell keeps its look wherever it lies in the window (`tests.test_theme.Variants`).
   - Forms (second channel for colour blindness): cell = machine/building block (plate joints, tinted plates, rivets,
-    vents, hatch, porthole, window rows, pipes, ducts, ladders, labels, hazard marks, lamps, dials, spalls, stains);
+    vents, hatch, porthole, window rows, pipes, ducts, ladders, labels, hazard marks, lamps, dials, hatched recesses,
+    rails, grilles, spalls, stains);
     own = the same family in the accent colour with a framed plate and a diamond in every variant, on the top too;
     wall = ashlar blocks in two or three courses under a coping band (slits, gratings, plaques); tower = a shaft
-    with a cornice, bands in their own colour, slits and a framed double door at the foot (the lowest 19 units show
-    the top rows of the texture again: a plinth). Ground = plates (tinted, a few light), joints, covers, hatches,
-    gutters, cracks, stains, scraps of paper, rubble.
+    with a cornice, plate courses with staggered joints, window rows with sills, bands in their own colour, a pipe or
+    ladder and a framed double door at the foot (the lowest 19 units show the top rows of the texture again: a
+    plinth). Ground = plates (tinted, a few light), wide joints (some through the whole cell), covers, hatches,
+    channels, hatching along a joint, cracks, stains, and litter with a contour (paper, crates, cans, rubble).
   - Colours: a role has at most three stages (surface, shade, fleck) plus navy for the lines; no grey, no gradient.
-    A fleck is an index of the same outline class as its surface: no outline around it (`theme_lump`).
-  - Lines are navy twin indices of the colour they lie on, three kinds, each folds into the surface in the COLORMAP
-    (`FOLD_Q` in `make_theme.py`; a row is about 1280 / distance below the start row): the core line (one texel, half a
-    unit) is drawn up to 128 units on the floor and 320 on walls; the halo (a second texel) is navy only between 80
-    and 128 units (floor) and 160 and 320 (walls), so far away the coarse lines are two texels (one unit) and keep
-    about the weight of the outline; fine things (rivets, scraps, cracks) fold at 80 and 160 units. Small flecks
-    (small stains, scraps) use a second index that the COLORMAP maps to the surface from 128 (floor) and 320
-    (walls) units on, so that no speck flickers when the camera moves.
+    A fleck is an index of the same outline class as its surface: no outline around it (`theme_lump`). The tower has a
+    strong colour of its own (violet, bands in yellow); the own cell keeps its framed diamond.
+  - Strokes are navy twin indices of the colour they lie on, three widths drawn into the texture: fine (1 texel), core
+    (2 texels, medium things: vents, frames of small parts) and wide (4 texels = 2 units: joints between plates, frames
+    of windows and doors, courses). Each folds into the surface in the COLORMAP (`FOLD_Q` in `make_theme.py`; a row is
+    about 1280 / distance below the start row): fine 80 units (floor) / 160 (walls), core 128 / 320, wide 640 / 640.
+    Small flecks (small stains, scraps, window panes) use a second index that the COLORMAP maps to the surface from 128
+    (floor) and 320 (walls) units on, so that no speck flickers when the camera moves. The tints of the ground
+    (`I_GROUND_SHADE`, `I_GROUND_LIGHT`) fold into the ground from 427 units (`FAR_Q`): far away the floor is one calm
+    plane, only big plates keep their tint to there (a tint on a plate under 100 texels uses the small index).
+  - **Thin lines near, long lines far (the thinning pass).** A texel is up to 5 points near a block, so a stroke
+    drawn into the texture would be thicker than the outline (measured before: median 2 / 2 / 2 points at 672 wide and
+    5 / 3 / 3 at 1280 at 64 / 128 / 256 units, `tools/measure_ink.py`). `ink_pass` (`pov_control.c`, lump `POVINK`)
+    runs on the finished picture before the outline pass and keeps of every stroke only the width of the outline (1
+    point, 2 from 901 wide): the top rows of a horizontal stroke, the left columns of an upright or slanted one, both
+    where strokes cross; the other points are set back to the colour under the stroke (`POVINK` lists, per stroke
+    index, that colour). After: median and 99th percentile 1 point at 672 and 2 at 1280 at every distance. Because
+    the width in the picture no longer decides the weight, a stroke can be drawn wide, and a wide stroke is a line that
+    stays about a point wide to 640 units. Floor strokes that run across the view and are no thicker than the outline
+    are dropped whole (a joint across the view is thinner than a point row beyond about 115 units: it would come and go
+    with every step of the camera); so are single specks. Only strokes that run into the depth reach far (1559 floor
+    stroke points between 150 and 400 units over three viewpoints at 672 x 324, before: none). A theme without `POVINK`
+    draws as before.
   - Why 2 texels to the unit: measured at 672 x 324 a unit is 2.62 points at 128 units, 1.30 at 256; at 1280 x 640 it
-    is 4.99 and 2.49 (`out/muster-detail`, see the report in the commit message). One texel a unit made a detail
-    line 2.6 points thick near a block at 672 wide (the outline is 1 point); two texels give 1.3, and 2.5 points at
-    1280 (outline 2). Four would be below a point from 128 units on at 672 and cost four times the memory.
+    is 4.99 and 2.49. One texel a unit would make a wide stroke thinner than a point from 128 units on at 672. The
+    joints on a cell edge of the ground are decided by `ground_edges` (`pov_control.c`): a joint runs along a line of
+    cells (four share the decision) and a zone of 4 x 4 cells says how many lines it has: calm zones and dense ones.
   - Engine: `R_DrawColumnTall` (rows masked with 255) for walls, `R_DrawSpanFine` takes the flat geometry from
     `pov_flat_bits` / `pov_flat_dshift`; `r_segs.c` scales the texture column, the row start and the step by
     `pov_tex_dshift`. Without a theme, or with a theme without `POVX`, nothing changes (hashes of the pictures of
@@ -278,7 +297,7 @@ dimming with distance, flat wall textures per kind and direction, floors, a sky,
 - Samples: `python3 tools/theme_samples.py` writes `out/muster/` (nine pictures, the comparison and the
   overview); `--size 672x324` the same in that size with the size in every file name, `--fine` writes
   672 x 324 and 1280 x 640 to `out/muster-fein/`, `--detail` writes `out/muster-detail/` (six viewpoints in A and B,
-  both sizes, the overview of A/B/C and the texture sheets). Tests: `python3 -m unittest tests.test_theme`.
+  both sizes, the overview of A/B/C and the texture sheets). Tests: `python3 -m unittest tests.test_theme tests.test_ink`.
 
 ## The sky (package P7)
 

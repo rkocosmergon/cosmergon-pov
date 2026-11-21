@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Generate the fixed 48 x 48 grid map as a PWAD (map E1M1). Standard library only.
 
 Layout (see COSMERGON.md):

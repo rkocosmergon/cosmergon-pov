@@ -1,3 +1,5 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Tests of the sky as a place in the world: clouds with depth, neighbour cubes, the haze
 (doomgeneric/pov_sky.c, pov_control.c; tools/sky_art.py; COSMERGON.md, "The sky").
 

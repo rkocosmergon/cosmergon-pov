@@ -1,3 +1,5 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Measures shared by the map generator and later packages (stdlib only).
 
 Doom units: 32 units per metre. All heights are in Doom units (integers, the

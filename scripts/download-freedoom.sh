@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Download Freedoom (pinned version), verify SHA-256, extract freedoom1.wad and COPYING.txt.
 set -euo pipefail
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Draw the sample scene in every theme: out/muster/muster-<A|B|C>-<1|2|3>.png, the comparison
 muster-heute-1.png (no theme) and the overview uebersicht.png. Standard library only.
 

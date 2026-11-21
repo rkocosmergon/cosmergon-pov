@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Renders the fixed map for every pattern and several viewpoints with the headless engine:
 # exit 0, no error text, picture not one color, bit-identical on repeat. Plus the
 # counter-check against the upstream renderer limits (separate build, own directory).

@@ -1,3 +1,5 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Headless build: no window, no sound, no SDL. Output: cosmergon-pov-headless
 
 ifeq ($(V),1)

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Small PPM (P6) helpers for the tests. Standard library only.
 
   ppm_stats.py colors FILE            print the number of distinct colors

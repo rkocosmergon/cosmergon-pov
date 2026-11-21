@@ -1,3 +1,5 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Tests of rise and sink (doomgeneric/pov_control.c; COSMERGON.md, "Rise and sink").
 
     python3 -m unittest tests.test_rise

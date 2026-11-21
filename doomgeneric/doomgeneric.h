@@ -1,3 +1,5 @@
+// Modified for cosmergon-pov, November 2026, by RKO Consult UG (haftungsbeschraenkt);
+// the changes are listed in COSMERGON.md and marked "cosmergon-pov" in the code.
 #ifndef DOOM_GENERIC
 #define DOOM_GENERIC
 

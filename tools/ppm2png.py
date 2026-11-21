@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Convert a binary PPM (P6, maxval 255) to PNG using only the standard library."""
 import struct
 import sys

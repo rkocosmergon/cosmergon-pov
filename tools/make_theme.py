@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Generate a look ("theme") as a PWAD. Standard library only, deterministic, no outside images.
 
     python3 tools/make_theme.py <name> [-o assets/theme-<name>.wad]

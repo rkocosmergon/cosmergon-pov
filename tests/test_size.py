@@ -1,3 +1,5 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Tests of the picture size (doomgeneric/pov_control.c, r_*.c; COSMERGON.md, "Picture size").
 
     python3 -m unittest tests.test_size

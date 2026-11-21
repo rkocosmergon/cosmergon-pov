@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Short probes on the device: one run of <seconds> per setting, CPU of the POV
 # program and of the compositor from /proc, plus the program's own measures.
 #   bash tools/probe_device.sh <seconds> <out-file> "<env settings>" ["<env settings>" ...]

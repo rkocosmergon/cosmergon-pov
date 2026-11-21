@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Time per picture of the headless engine for several picture sizes, with and without a theme.
 
     make -C doomgeneric -f Makefile.headless

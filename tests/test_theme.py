@@ -1,3 +1,5 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Tests of the themes (tools/make_theme.py, outline pass in doomgeneric/pov_control.c).
 
     python3 -m unittest tests.test_theme

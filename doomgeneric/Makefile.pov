@@ -1,3 +1,5 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 # cosmergon-pov: the window program (SDL2, no sound). Built on the device:
 #   make -f Makefile.pov -j4
 # Needs sdl2-config (SDL2 or sdl2-compat). No SDL2_mixer.

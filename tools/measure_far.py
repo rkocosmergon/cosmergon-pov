@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """How calm the floor is in the far band, and how much of it changes in a short drive.
 
     python3 tools/measure_far.py [--root <checkout>] [--theme gelbestadt] [--size 672x324]

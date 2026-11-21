@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Thickness of the strokes drawn into the walls, in points, as the engine shows them.
 
     python3 tools/measure_ink.py [--root <checkout>] [--theme wueste]

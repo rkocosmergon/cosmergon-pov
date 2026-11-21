@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Sheets of the thing kinds: out/muster-figuren/figuren-<theme>-<size>.png (marauder, monster, bird, corpse, loot side by
 side, 3 cells from an eye at eye height, labelled), figuren-ohne-Thema-<size>.png and figuren-faellt-<theme>-<size>.png
 (a monster, then a corpse with the same id, no `gone`). Standard library only.

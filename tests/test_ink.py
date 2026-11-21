@@ -1,3 +1,5 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Tests of the strokes: how thick they are near the viewer, how far the floor strokes reach, and how calm the far floor is.
 
     python3 -m unittest tests.test_ink

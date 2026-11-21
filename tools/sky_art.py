@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """The sky of the themes: clouds and stars, and the sun/moon arc. Standard library only, deterministic. Used by
 tools/make_theme.py; the engine side is doomgeneric/pov_sky.c (the numbers are the same there, tests/test_sky.py
 compares them).

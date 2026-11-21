@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Headless smoke test: build, run 350 frames, check files, determinism and failure paths.
 set -u
 

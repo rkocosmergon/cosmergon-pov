@@ -1,3 +1,5 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Tests for tools/make_map.py (standard library only). Run: python3 -m unittest tests.test_make_map"""
 
 import os

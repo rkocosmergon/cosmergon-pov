@@ -1,3 +1,15 @@
+# cosmergon-pov
+
+A view-only fork of [ozkl/doomgeneric](https://github.com/ozkl/doomgeneric): the Doom renderer shows a
+[Cosmergon](https://cosmergon.com) field from the eyes of an agent. No game runs in it; the picture follows text
+lines on stdin. What the fork adds, how to build it and how it is driven: [COSMERGON.md](COSMERGON.md).
+License: GPL-2.0 (`LICENSE`), as upstream. Game data is not part of this repository; the build fetches
+[Freedoom](https://freedoom.github.io) (BSD-3-Clause) with a pinned checksum.
+
+The upstream README follows unchanged.
+
+---
+
 # doomgeneric
 The purpose of doomgeneric is to make porting Doom easier.
 Of course Doom is already portable but with doomgeneric it is possible with just a few functions.

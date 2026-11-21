@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Measurement on the device. Two windows of equal length, one after the other:
 #   A  without the POV window (what the desktop costs as it stands)
 #   B  with the POV window, fed by tools/pov_walk.py

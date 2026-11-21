@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Time per picture with the whole field travelling at once (COSMERGON.md, "Rise and sink", "Measured").
 
     make -C doomgeneric -f Makefile.headless

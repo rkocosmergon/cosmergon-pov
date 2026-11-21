@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """The time of day of the themes: key palettes and the way the engine mixes them. Standard library only.
 
 A theme has one palette per KEY (a minute of the day); the engine (doomgeneric/pov_sky.c, `daytime` line)

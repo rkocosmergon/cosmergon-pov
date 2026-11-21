@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """The drawn surfaces of the themes: palette layout, a small canvas, and the faces, floors and tops.
 
 Standard library only, deterministic (every variant has its own seeded generator, nothing depends on

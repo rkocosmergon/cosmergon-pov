@@ -1,3 +1,5 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Tests of the control channel (doomgeneric/pov_control.c). Standard library only.
 
 Every test starts the headless binary as a subprocess (never with DISPLAY, always with a timeout),

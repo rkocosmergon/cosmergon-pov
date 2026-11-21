@@ -1,3 +1,5 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Tests of the sky (doomgeneric/pov_sky.c, tools/sky_art.py, tools/theme_day.py; COSMERGON.md, "The sky").
 
     python3 -m unittest tests.test_sky

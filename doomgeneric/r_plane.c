@@ -1,6 +1,8 @@
 //
 // Copyright(C) 1993-1996 Id Software, Inc.
 // Copyright(C) 2005-2014 Simon Howard
+// Modified for cosmergon-pov, November 2026, by RKO Consult UG (haftungsbeschraenkt);
+// the changes are listed in COSMERGON.md and marked "cosmergon-pov" in the code.
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU General Public License

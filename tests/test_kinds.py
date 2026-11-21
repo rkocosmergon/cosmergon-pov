@@ -1,3 +1,5 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Tests of the thing kinds `marauder`, `loot`, `monster`, `bird`, `corpse` and of the `capabilities` file
 (doomgeneric/pov_control.c `s_thing_kind`, doomgeneric/pov_capabilities.txt; COSMERGON.md, "Capabilities").
 

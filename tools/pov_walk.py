@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """A stand-in for the bridge: writes a moving scene to the control channel in real time.
 
     python3 tools/pov_walk.py <seconds> [rate] | doomgeneric/cosmergon-pov ... -pov-control

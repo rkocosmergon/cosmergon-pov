@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
 """Samples of rise and sink (COSMERGON.md, "Rise and sink"): out/muster-fahrt/.
 
     make -C doomgeneric -f Makefile.headless

@@ -409,6 +409,7 @@ R_DrawVisSprite
     patch_t*		patch;
 	
 	
+    pov_wall_id = 0;     // cosmergon-pov: a sprite is no wall
     patch = W_CacheLumpNum (vis->patch+firstspritelump, PU_CACHE);
 
     dc_colormap = vis->colormap;

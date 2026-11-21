@@ -25,6 +25,7 @@
 #include "p_local.h"
 #include "p_mobj.h"
 #include "r_data.h"
+#include "r_draw.h"
 #include "r_main.h"
 #include "r_state.h"
 #include "tables.h"
@@ -44,22 +45,28 @@
 #define POV_CELL_SIZE 128           // units
 #define POV_ORIGIN    (-3072)       // world coordinate of the south-west corner of the window
 
-enum { K_EMPTY = 0, K_CELL, K_WALL, K_TOWER, K_COUNT };
+enum { K_EMPTY = 0, K_CELL, K_WALL, K_TOWER, K_OWN, K_COUNT };
 
 // Look of each kind. `lower` is the lower wall texture seen on the four edges of a cell of this
 // kind, `flat` its floor (top face). All names exist in freedoom1.wad (tests check this).
 // Texture heights are 128 so that a step of up to 147 units stays inside one texture repeat.
+// With a theme (a PWAD with a POVTHEME lump) the walls take `theme_x` on the two edges that face
+// east or west and `theme_y` on those that face north or south (two shades of one role, so the
+// edges of a block show); the flats keep their names (the theme's own flat range holds them).
 static const struct
 {
     const char *name;
     const char *lower;
     const char *flat;
     int         height;
+    const char *theme_x;
+    const char *theme_y;
 } s_kind[K_COUNT] = {
-    { "empty", "STARTAN3", "FLOOR4_8", POV_H_EMPTY },   // the state of the generated map
-    { "cell",  "A-CAMO1",  "GRASS1",   POV_H_CELL },
-    { "wall",  "A-BRICK1", "FLAT10",   POV_H_WALL },
-    { "tower", "STONE2",   "FLAT5_4",  POV_H_TOWER },
+    { "empty", "STARTAN3", "FLOOR4_8", POV_H_EMPTY, "PEX", "PEY" },   // the state of the generated map
+    { "cell",  "A-CAMO1",  "GRASS1",   POV_H_CELL,  "PCX", "PCY" },
+    { "wall",  "A-BRICK1", "FLAT10",   POV_H_WALL,  "PWX", "PWY" },
+    { "tower", "STONE2",   "FLAT5_4",  POV_H_TOWER, "PTX", "PTY" },
+    { "own",   "A-CAMO2",  "GRASS2",   POV_H_CELL,  "POX", "POY" },   // a cell of the viewer's own
 };
 
 // Things: the sprite of each kind (frame A, the 8 rotations show the facing).
@@ -88,7 +95,7 @@ static unsigned long s_rejected = 0;
 static int s_summary_done = 0;
 
 static unsigned char s_kind_of[POVC_CELLS];
-static short s_texnum[K_COUNT];
+static short s_texnum[K_COUNT][2];   // [kind][0 = edge facing east/west, 1 = north/south]
 static short s_flatnum[K_COUNT];
 static short s_facing[POVC_CELLS][4];    // side index of the cell's sidedef facing east/west/north/south
 
@@ -197,7 +204,7 @@ static void set_kind(int cell, int kind)
 
         if (other >= 0)
         {
-            sides[s_facing[other][opposite(d)]].bottomtexture = s_texnum[kind];
+            sides[s_facing[other][opposite(d)]].bottomtexture = s_texnum[kind][d >> 1];
         }
     }
     s_dirty = 1;
@@ -416,6 +423,7 @@ static int kind_from_char(char c)
     case '#': return K_CELL;
     case '=': return K_WALL;
     case 'T': return K_TOWER;
+    case 'O': return K_OWN;
     default: return -1;
     }
 }
@@ -521,7 +529,7 @@ static const char *parse_line(const unsigned char *line, size_t len, command_t *
 
             if (k < 0)
             {
-                return "bad character in row (use . # = T)";
+                return "bad character in row (use . # = T O)";
             }
             c->row[i] = (unsigned char)k;
         }
@@ -774,6 +782,107 @@ static int level_loaded(void)
            && players[consoleplayer].mo != NULL;
 }
 
+// ---------------------------------------------------------------------------------------
+// Theme (see COSMERGON.md, "Themes"). A PWAD with a POVTHEME lump:
+//   bytes 0..3 "POVT", 4 version (1), 5 outline on (0/1), 6 outline colour index, 7 light level
+//   of all sectors (it fixes which COLORMAP row belongs to which distance, tools/make_theme.py),
+//   8..263 class per colour index,
+//   264..519 rank per colour index. An outline pixel is set on the pixel of lower rank where two
+//   neighbours have different classes (equal rank: the lower class); pixels of one wall plane
+//   (pov_wall_id) count as one surface even where colour indices differ.
+// ---------------------------------------------------------------------------------------
+#define THEME_LUMP_SIZE 520
+
+extern int pov_gamma_off;      // i_video.c
+static int s_theme_on = 0;
+static int s_outline_on = 0;
+static unsigned char s_outline_index = 0;
+static unsigned char s_class[256];
+static unsigned char s_rank[256];
+static unsigned char *s_shot = NULL;       // copy of the picture the outline is derived from
+
+static void theme_init(void)
+{
+    int lump = W_CheckNumForName("POVTHEME");
+    unsigned char *data;
+    int i;
+
+    s_theme_on = lump >= 0;
+    if (!s_theme_on)
+    {
+        return;
+    }
+    if (W_LumpLength(lump) != THEME_LUMP_SIZE)
+    {
+        I_Error("pov-control: POVTHEME must be %d bytes, it has %d", THEME_LUMP_SIZE, W_LumpLength(lump));
+    }
+    data = W_CacheLumpNum(lump, PU_STATIC);
+    if (memcmp(data, "POVT", 4) != 0 || data[4] != 1)
+    {
+        I_Error("pov-control: POVTHEME has the wrong magic or version");
+    }
+    pov_gamma_off = 1;
+    s_outline_on = data[5] != 0;
+    s_outline_index = data[6];
+    for (i = 0; i < numsectors; i++)
+    {
+        sectors[i].lightlevel = data[7];
+    }
+    memcpy(s_class, data + 8, 256);
+    memcpy(s_rank, data + 264, 256);
+    if (s_outline_on)
+    {
+        static unsigned short idmem[SCREENWIDTH * SCREENHEIGHT];
+        static unsigned char shotmem[SCREENWIDTH * SCREENHEIGHT];
+
+        pov_idbuf = idmem;
+        s_shot = shotmem;
+    }
+}
+
+static int is_edge(int p, int q)
+{
+    unsigned char a = s_shot[p], b = s_shot[q];
+    int ia = pov_idbuf[p], ib = pov_idbuf[q];
+
+    if (ia != 0 && ib != 0 && ia != ib)
+    {
+        // two wall planes: the line goes on the one with the lower id (any fixed rule will do)
+        return ia < ib;
+    }
+    if (s_class[a] == s_class[b])
+    {
+        return 0;
+    }
+    return s_rank[a] < s_rank[b] || (s_rank[a] == s_rank[b] && s_class[a] < s_class[b]);
+}
+
+// Lines on the finished picture (8 bit, before the palette): one pixel, on the side of the
+// lower rank, so a surface keeps its full area and the line sits outside of it.
+static void outline_pass(void)
+{
+    int x, y;
+
+    memcpy(s_shot, I_VideoBuffer, SCREENWIDTH * SCREENHEIGHT);
+    for (y = 0; y < SCREENHEIGHT; y++)
+    {
+        for (x = 0; x < SCREENWIDTH; x++)
+        {
+            int p = y * SCREENWIDTH + x;
+            int hit = 0;
+
+            if (x + 1 < SCREENWIDTH) hit |= is_edge(p, p + 1);
+            if (x > 0) hit |= is_edge(p, p - 1);
+            if (y + 1 < SCREENHEIGHT) hit |= is_edge(p, p + SCREENWIDTH);
+            if (y > 0) hit |= is_edge(p, p - SCREENWIDTH);
+            if (hit)
+            {
+                I_VideoBuffer[p] = s_outline_index;
+            }
+        }
+    }
+}
+
 static void init_world(void)
 {
     int i, d, k;
@@ -829,9 +938,11 @@ static void init_world(void)
             I_Error("pov-control: cell %d is not sector/subsector %d", i, i);
         }
     }
+    theme_init();
     for (k = 0; k < K_COUNT; k++)
     {
-        s_texnum[k] = tex_num(s_kind[k].lower);
+        s_texnum[k][0] = tex_num(s_theme_on ? s_kind[k].theme_x : s_kind[k].lower);
+        s_texnum[k][1] = tex_num(s_theme_on ? s_kind[k].theme_y : s_kind[k].lower);
         s_flatnum[k] = flat_num(s_kind[k].flat);
     }
     // Whatever pattern the map was generated with: start with everything empty.
@@ -867,7 +978,18 @@ static void render_frame(void)
     {
         R_ExecuteSetViewSize();
     }
+    if (s_outline_on)
+    {
+        memset(pov_idbuf, 0, SCREENWIDTH * SCREENHEIGHT * sizeof(*pov_idbuf));
+        // the renderer leaves single pixels at some wall joints uncovered (upstream); they would
+        // show the previous picture. Start from the outline colour: such a pixel becomes line.
+        memset(I_VideoBuffer, s_outline_index, SCREENWIDTH * SCREENHEIGHT);
+    }
     R_RenderPlayerView(&players[consoleplayer]);
+    if (s_outline_on)
+    {
+        outline_pass();
+    }
     s_dirty = 0;
     I_FinishUpdate();       // -> DG_DrawFrame
 }

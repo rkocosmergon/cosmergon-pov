@@ -419,6 +419,7 @@ void R_DrawPlanes (void)
 		    angle = (viewangle + xtoviewangle[x])>>ANGLETOSKYSHIFT;
 		    dc_x = x;
 		    dc_source = R_GetColumn(skytexture, angle);
+		    pov_wall_id = 0;
 		    colfunc ();
 		}
 	    }

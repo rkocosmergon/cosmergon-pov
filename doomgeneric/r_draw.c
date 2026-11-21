@@ -99,12 +99,18 @@ int			dccount;
 // Thus a special case loop for very fast rendering can
 //  be used. It has also been used with Wolfenstein 3D.
 // 
+// cosmergon-pov: identity of the wall each pixel was drawn from (outline pass, pov_control.c).
+// NULL unless a theme with outlines is loaded; the picture itself is not touched by it.
+unsigned short *pov_idbuf = NULL;
+unsigned short pov_wall_id = 0;
+
 void R_DrawColumn (void) 
 { 
     int			count; 
     byte*		dest; 
     fixed_t		frac;
     fixed_t		fracstep;	 
+    unsigned short *idp = NULL;
  
     count = dc_yh - dc_yl; 
 
@@ -123,6 +129,10 @@ void R_DrawColumn (void)
     // Use ylookup LUT to avoid multiply with ScreenWidth.
     // Use columnofs LUT for subwindows? 
     dest = ylookup[dc_yl] + columnofs[dc_x];  
+    if (pov_idbuf != NULL)
+    {
+        idp = pov_idbuf + (dest - I_VideoBuffer);
+    }
 
     // Determine scaling,
     //  which is the only mapping to be done.
@@ -137,6 +147,11 @@ void R_DrawColumn (void)
 	// Re-map color indices from wall texture column
 	//  using a lighting/special effects LUT.
 	*dest = dc_colormap[dc_source[(frac>>FRACBITS)&127]];
+	if (idp != NULL)
+	{
+	    *idp = pov_wall_id;
+	    idp += SCREENWIDTH;
+	}
 	
 	dest += SCREENWIDTH; 
 	frac += fracstep;

@@ -183,7 +183,7 @@ class MeasuresAndAssets(unittest.TestCase):
         text = read_text(os.path.join(ROOT, "doomgeneric", "pov_control.c"))
         table = re.search(r"s_kind\[K_COUNT\] = \{(.*?)\n\};", text, re.S).group(1)
         rows = re.findall(r'\{ "(\w+)",\s+"([^"]+)",\s+"([^"]+)"', table)
-        self.assertEqual([r[0] for r in rows], ["empty", "cell", "wall", "tower"])
+        self.assertEqual([r[0] for r in rows], ["empty", "cell", "wall", "tower", "own"])
         with open(IWAD, "rb") as handle:
             data = handle.read()
         count, off = struct.unpack("<ii", data[4:12])
@@ -212,9 +212,9 @@ class MeasuresAndAssets(unittest.TestCase):
         # the sprite frames the table uses (8 rotations or one for all): TROOA, BPAKA
         self.assertTrue(any(n.startswith("TROOA") for n in names))
         self.assertTrue(any(n.startswith("BPAKA") for n in names))
-        # the four kinds look different: four distinct lower textures and four distinct flats
-        self.assertEqual(len({r[1] for r in rows}), 4)
-        self.assertEqual(len({r[2] for r in rows}), 4)
+        # the five kinds look different: five distinct lower textures and five distinct flats
+        self.assertEqual(len({r[1] for r in rows}), 5)
+        self.assertEqual(len({r[2] for r in rows}), 5)
 
     def test_flat_map_is_all_empty_and_start_in_the_middle(self):
         lumps = dict(make_map.build_map("flat"))

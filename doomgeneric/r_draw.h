@@ -25,6 +25,9 @@
 
 extern lighttable_t*	dc_colormap;
 extern int		dc_x;
+// cosmergon-pov: outline pass (r_draw.c)
+extern unsigned short *pov_idbuf;
+extern unsigned short pov_wall_id;
 extern int		dc_yl;
 extern int		dc_yh;
 extern fixed_t		dc_iscale;

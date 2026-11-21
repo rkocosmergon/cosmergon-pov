@@ -167,6 +167,20 @@ void P_InitPicAnims (void)
 	{
 	    if (W_CheckNumForName(startname) == -1)
 		continue;
+#ifdef POV_VIEW_ONLY
+	    // cosmergon-pov: a theme has its own flat range (F_START..F_END of the theme). A flat
+	    // that the IWAD has but the range does not is no flat: its index would be negative or
+	    // beyond the range, and P_UpdateSpecials would write flattranslation[] out of bounds
+	    // (found 2026-11-21: it overwrote lumps in the zone)
+	    {
+		extern int firstflat, lastflat;
+		int l1 = W_CheckNumForName(startname);
+		int l2 = W_CheckNumForName(endname);
+
+		if (l1 < firstflat || l1 > lastflat || l2 < firstflat || l2 > lastflat)
+		    continue;
+	    }
+#endif
 
 	    lastanim->picnum = R_FlatNumForName(endname);
 	    lastanim->basepic = R_FlatNumForName(startname);

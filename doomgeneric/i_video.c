@@ -385,6 +385,8 @@ void I_ReadScreen (byte* scr)
 #define GFX_RGB565_G(color)			((0x07E0 & color) >> 5)
 #define GFX_RGB565_B(color)			(0x001F & color)
 
+int pov_gamma_off = 0;      // cosmergon-pov: set by a theme (pov_control.c)
+
 void I_SetPalette (byte* palette)
 {
 	int i;
@@ -407,9 +409,10 @@ void I_SetPalette (byte* palette)
 
     for (i=0; i<256; ++i ) {
         colors[i].a = 0;
-        colors[i].r = gammatable[usegamma][*palette++];
-        colors[i].g = gammatable[usegamma][*palette++];
-        colors[i].b = gammatable[usegamma][*palette++];
+        // cosmergon-pov: a theme's colours are exact (the gamma table is not the identity)
+        colors[i].r = pov_gamma_off ? *palette++ : gammatable[usegamma][*palette++];
+        colors[i].g = pov_gamma_off ? *palette++ : gammatable[usegamma][*palette++];
+        colors[i].b = pov_gamma_off ? *palette++ : gammatable[usegamma][*palette++];
     }
 
 #ifdef CMAP256

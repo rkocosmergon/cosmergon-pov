@@ -201,3 +201,33 @@ A picture costs about 6 ms, half of it the engine, half the hand-over to the win
 of 20,997 pictures took 16.9 ms, 10 took longer than half a step (14.3 ms). The cost is the number of
 pictures: that is why a step without a change draws nothing. The dashboard's view steps 5 to 8 times a
 second. Tools: `tools/measure_device.sh`, `tools/probe_device.sh`.
+
+## Themes (looks)
+
+A theme is a PWAD made by `tools/make_theme.py` (themes are data in its `THEMES` table): palette, no
+dimming with distance, flat wall textures per kind and direction, floors, a sky, and a `POVTHEME` lump
+(outline switch, light level, class and rank per colour index). Without a theme nothing changes.
+
+    python3 tools/make_theme.py gelbestadt -o assets/theme-gelbestadt.wad
+    doomgeneric/cosmergon-pov-headless -iwad assets/freedoom/freedoom1.wad -file assets/cosmergon.wad \
+        -pov-theme assets/theme-gelbestadt.wad -pov-control -warp 1 1 < scene.txt
+
+- `-pov-theme <file>` adds the PWAD after the map; its lumps win. Its own `F_START..F_END` replaces the
+  IWAD's flat range (so only the six flats of the theme exist) and its `TEXTURE1`/`PNAMES` replace the
+  IWAD's textures; the IWAD's `TEXTURE2` is replaced by an empty one.
+- The theme's colours are shown exactly (no gamma table, `pov_gamma_off` in `i_video.c`).
+- Outline pass (`pov_control.c`, `outline_pass`): on the finished 8-bit picture (320 x 200, shown at 2 x),
+  one pixel in the outline colour where two neighbours are different surfaces, on the side of the lower
+  rank (a surface keeps its area). Sky gradient indices are one class: no lines in the sky. Wall pixels
+  carry the id of their wall plane (`pov_wall_id`, `r_segs.c`/`r_draw.c`): collinear cell edges are one
+  plane, two planes at different distances get a line even where their colour is equal.
+- Joints (floor tiles, slab seams, hatches) are drawn into the textures with "twin" colour indices; the
+  COLORMAP of the farther light rows maps a twin to its surface colour, so joints vanish with distance
+  (see the header of `tools/make_theme.py`; the theme sets the light level of all sectors).
+- Kind `own` (row character `O`): a cell of the viewer's own, same height as `cell`.
+- Sprites (things) are still the IWAD's and are wrong in a theme's palette: samples show no things.
+- Upstream fixes needed by a theme (marked `// cosmergon-pov:`): `p_spec.c` (an animated flat that the
+  theme's flat range does not hold made `flattranslation[]` writes land in the zone and corrupt lumps),
+  `p_switch.c` (switch textures missing from a theme are skipped).
+- Samples: `python3 tools/theme_samples.py` writes `out/muster/` (nine pictures, the comparison and the
+  overview). Tests: `python3 -m unittest tests.test_theme`.

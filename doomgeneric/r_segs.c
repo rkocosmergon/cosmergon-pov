@@ -418,6 +418,15 @@ R_StoreWallRange
     ds_p->x1 = rw_x = start;
     ds_p->x2 = stop;
     ds_p->curline = curline;
+    {
+        // cosmergon-pov: which wall plane this seg lies on (outline pass). Collinear segs of
+        // one side share an id, so the cell edges along one flat wall give no line.
+        int horizontal = curline->v1->y == curline->v2->y;
+        int back = curline->sidedef != &sides[curline->linedef->sidenum[0]];
+        int coord = ((horizontal ? curline->v1->y : curline->v1->x) >> FRACBITS) + 3072;
+
+        pov_wall_id = (unsigned short)(1 + (((coord >> 7) * 2 + horizontal) * 2 + back));
+    }
     rw_stopx = stop+1;
     
     // calculate scale at both ends and step

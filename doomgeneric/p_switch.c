@@ -135,6 +135,15 @@ void P_InitSwitchList(void)
 	    
 	    value = R_TextureNumForName(alphSwitchList[i].name1);
 #endif
+#ifdef POV_VIEW_ONLY
+	    // cosmergon-pov: a theme's TEXTURE1 holds only the textures it uses; the view never
+	    // presses a switch, so a pair that is not there is skipped
+	    if (R_CheckTextureNumForName(DEH_String(alphSwitchList[i].name1)) < 0
+	     || R_CheckTextureNumForName(DEH_String(alphSwitchList[i].name2)) < 0)
+	    {
+		continue;
+	    }
+#endif
 	    switchlist[index++] = R_TextureNumForName(DEH_String(alphSwitchList[i].name1));
 	    switchlist[index++] = R_TextureNumForName(DEH_String(alphSwitchList[i].name2));
 	}

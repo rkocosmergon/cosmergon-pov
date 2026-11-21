@@ -191,6 +191,18 @@ boolean W_ParseCommandLine(void)
         }
     }
 
+    // cosmergon-pov: a theme is a PWAD (palette, colormap, textures, flats, POVTHEME lump),
+    // added after the map so that its lumps win. See COSMERGON.md, "Themes".
+    p = M_CheckParmWithArgs("-pov-theme", 1);
+    if (p)
+    {
+        char *filename = D_TryFindWADByName(myargv[p + 1]);
+
+        modifiedgame = true;
+        printf(" adding theme %s\n", filename);
+        W_AddFile(filename);
+    }
+
 //    W_PrintDirectory();
 
     return modifiedgame;

@@ -20,6 +20,7 @@ License: GPL-2.0 (see `LICENSE`, unchanged).
 - `tests/test_size.py`, `tools/measure_size.py`: picture size (package P5, "Picture size" below).
 - `tools/ring_art.py`, `tools/ring_samples.py`, `tools/measure_rim.py`, `tests/test_ring.py`: the field's rim, a ring of cells one storey high with bunks and shaft portals as recesses ("The field's rim").
 - `tests/test_rise.py`, `tools/rise_samples.py`, `tools/measure_rise.py`: cells rise out of the ground and sink into it ("Rise and sink").
+- `assets/figures/`, `tools/figures.py`, `tools/make_figures.py`, `tests/test_figures.py`: the game's own figures as sprites of the themes ("Own figures").
 - One upstream change: `doomgeneric/i_system.c` skips the zenity error dialog when
   `POV_NO_ERROR_DIALOG` is defined (set in `Makefile.headless`). The message still goes to stderr.
 
@@ -189,8 +190,8 @@ writes every 64th frame.
 ### Thing kinds
 
 A thing is placed by `thing <id> <kind> <x> <y> <angle>`; a new line with the same id moves it and may change its kind
-(no `gone` needed: sprite, frame and height are taken anew). The sprites are Freedoom's and stand in until the game's own
-figures exist (table `s_thing_kind`: name, sprite, frame, lift).
+(no `gone` needed: sprite, frame and height are taken anew). With a theme the sprites are the game's own figures ("Own figures");
+without one they are Freedoom's and stand in (table `s_thing_kind`: name, sprite, frame, lift).
 
 | Kind | Sprite | Body | Height |
 |---|---|---|---|
@@ -198,7 +199,7 @@ figures exist (table `s_thing_kind`: name, sprite, frame, lift).
 | `loot` | `BPAK` A | | on the floor |
 | `monster` | `BOSS` A (8 rotations) | radius 0.9 m, the largest | on the floor |
 | `bird` | `HEAD` A (8 rotations) | radius 0.8 m | floats: origin 40 units over the floor, lowest point 35 and top 101 units over it (under the 128 of a cell) |
-| `corpse` | `TROO` M (frame 12, the last of the death), one look | lies | on the floor, does not turn: the angle (always 0 from the bridge) changes nothing |
+| `corpse` | `POL5` A (a pool of blood without a theme; a fallen marauder with one), one look | lies | on the floor, does not turn: the angle (always 0 from the bridge) changes nothing |
 
 Every thing's z follows the floor of its cell in every drawn frame (`commit()`), a floating one adds its lift, so a bird over
 a rising or sinking cell rises and sinks with it. An unknown kind is rejected as before; ids 0..255 and the limit of things
@@ -334,7 +335,7 @@ dimming with distance, flat wall textures per kind and direction, floors, a sky,
     `81fb3a0` are a test).
 - Kind `own` (row character `O`): a cell of the viewer's own, same height as `cell`.
 - The kinds of the field's rim have faces of their own ("The field's rim").
-- Sprites (things) are still the IWAD's and are wrong in a theme's palette (noisy colours, the silhouette and the outline stay readable; `tools/kinds_samples.py` draws them in the themes).
+- Sprites (things): a theme brings the game's own figures in its palette ("Own figures"). Without a theme the IWAD's stand in (`tools/kinds_samples.py` draws both).
 - Upstream fixes needed by a theme (marked `// cosmergon-pov:`): `p_spec.c` (an animated flat that the
   theme's flat range does not hold made `flattranslation[]` writes land in the zone and corrupt lumps),
   `p_switch.c` (switch textures missing from a theme are skipped).
@@ -402,6 +403,51 @@ sector has no thin wall.
   (what the bridge sends for a field of `dim`: `world`, `origin`, the rows, a few cells inside, the shaft floor at half height in `schacht-innen`).
 - Measure: `python3 tools/measure_rim.py [--bin ...]`.
 - Tests: `python3 -m unittest tests.test_ring tests.test_kinds`.
+
+## Own figures
+
+The five thing kinds (`marauder`, `monster`, `bird`, `corpse`, `loot`) have figures of their own. A theme carries them as the
+sprites of its range (`S_START`..`S_END` replace the IWAD's), so `python3 tools/make_theme.py <theme>` builds everything and
+needs neither Blender nor any picture outside this repository. Without a theme the IWAD's placeholders are drawn as before.
+
+- **Origin.** Own work of the project: 3D models written as scripts for Blender (the project's graphics workshop, not part of
+  this repository), rendered orthographic from eye height (the corpse and the loot from 15 degrees above), 160 render points to
+  the metre, 8 directions. `tools/make_figures.py <picture-dir>` reduces the renders by 5 to **32 points to the metre**
+  (one point = one unit of the engine; a wall's 128 units are a cell of 4 m), puts every point on a role of the theme layout
+  and writes the templates. The renders are not part of the repository, the templates are.
+- **Templates.** `assets/figures/<kind>-<direction>.png`: 26 small files (largest 1.1 kB, 16.3 kB together), 8 bit paletted
+  PNG cut to the figure's box. A template holds the palette INDICES of the theme layout (`theme_art.py`), not colours, so it is
+  the same file for every theme; the PNG's own palette only shows it in the colours of `wueste`. Value 0 is transparent, value
+  v + 1 is the index v. The private chunk `cORg` holds the origin (left and top offset of the Doom picture). Direction 0: the
+  figure faces the viewer; 1 turns towards the viewer's right, and so on counter-clockwise seen from above. Engine rotation n
+  (1..8) is direction -(n - 1) mod 8. A figure uses only the navy and the keys `t0`, `t1`, `y0`, `y1` of the roles (the x
+  keys of a role are hazed earlier than a sprite's light is).
+- **Sprites.** `TROOA1`..`A8` (marauder), `BOSSA1`..`A8` (monster), `HEADA1`..`A8` (bird), `POL5A0` (corpse), `BPAKA0` (loot);
+  26 lumps, 90.7 kB. A theme PWAD grows from 8,286,919 to 8,378,052 bytes (+91,133). Two builds are the same bytes.
+- **Sizes** (measured on the renders, outline included; origin at the feet): monster 3.66 m (about 3.7 m) high, 2.55 m wide from the front
+  (2.9 m at an angle), 2.75 m deep: 117 x 82 points; marauder 64 points (2.0 m); bird 3.04 m of wing span, 1.27 m high, 98 x 40 points,
+  its origin at its lowest point, so with the lift of 40 units (`s_thing_kind`) it floats from 40 to 81 units over the floor;
+  corpse 61 x 13 points; loot 24 x 19.
+- **Tones.** The monster is the dark one: its body is the navy of the lines (40 percent of its points; the marauder 16),
+  limbs and armour the tower's `y1` and `y0`; its mouth is navy with teeth and its eyes in the tone of `own` (yellow or
+  orange: bright in every theme), so the face holds in all three themes. A darker tone than the navy does not exist in the
+  layout, and the marauder already uses `y1`, the darkest of the roles. The haze (measured with the monster at 6 to 80 m in
+  `wueste`): the navy is not hazed at any distance, `y1` not up to 80 m, the tops `t*` and the `own` tone from about 24 m (one
+  step to the horizon colour). A far monster is therefore a dark body with a hazed rim.
+- **Make anew.** Render the models (picture folders `marauder`, `monster`, `bird`, `corpse`, `loot` with `idle_dir0..7.png`,
+  `glide_dir0..7.png` for the bird, `idle_dir0.png` for the corpse and the loot), then
+  `python3 tools/make_figures.py <picture-dir>` and commit the templates. The colour tables of the render colours are at the
+  top of `tools/make_figures.py`.
+- **Licence.** The figure pictures (the models, the renders and the templates in `assets/figures/`) are own work of the
+  project and under the licence of this repository, GPL-2.0-or-later, like the pictures `tools/theme_art.py` draws.
+  No third-party picture is used.
+- **Not done.** No animation: a figure is one picture per direction. Walking or a wing beat needs several pictures per
+  direction (frames B, C, ... of the same sprite) and a command that names the frame: the `thing` line carries a kind and an angle
+  only, so the program would need either a frame number in the line (a new capability word) or a step of its own that cycles
+  the frames while a thing moves between two lines. The table `s_thing_kind` holds one frame per kind.
+- **Cost.** 20 figures in view, 672 x 324, 400 pictures, 3 runs: 4.98 ms before (theme with the IWAD's sprites) and 4.19 ms after
+  per picture; 0.94 ms without a theme.
+- Tests: `python3 -m unittest tests.test_figures`.
 
 ## The sky (package P7)
 

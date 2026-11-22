@@ -98,15 +98,16 @@ static const struct
 };
 
 // Things: the sprite and frame of each kind, and how high its origin floats above the floor of its cell
-// (units). A sprite with 8 rotations shows the facing; one with a single look (rotation 0: BPAK, the
-// TROO death frame) does not turn. The sprites are the IWAD's and stand in until the game's own figures
-// exist; the lumps used are checked by tests/test_kinds.py.
+// (units). A sprite with 8 rotations shows the facing; one with a single look (rotation 0: BPAK, POL5) does not turn.
+// A theme brings the figures of the game (tools/figures.py, one picture a rotation, the same names); without a theme
+// the IWAD's sprites stand in, and the lumps used are checked by tests/test_kinds.py.
 //   marauder  TROO A  the imp, 48 x 60 units (body radius 0.6 m)
-//   monster   BOSS A  the baron, 49 x 69, horned and broad (radius 0.9 m, the largest body)
+//   monster   BOSS A  the baron, 49 x 69, horned and broad (radius 0.9 m, the largest body); the own figure is 3.7 m high
 //   bird      HEAD A  the cacodemon, a round flier 63 x 66; it floats: origin 40 above the floor, so its
 //                     lowest point (5 under the origin) is 35 clear of the ground, about the eye (41), and
-//                     its top (61 over the origin) is 101, under the 128 of a cell
-//   corpse    TROO M  the last frame of the death (12): lies on the floor, one look from every side
+//                     its top (61 over the origin) is 101, under the 128 of a cell; the own figure has its origin at
+//                     its lowest point (the loot it carries), so 40 clear of the ground and 95 at the top
+//   corpse    POL5 A  a pool of blood: lies on the floor, one look from every side (the own figure is a fallen marauder)
 //   loot      BPAK A  a backpack
 static const struct
 {
@@ -119,7 +120,7 @@ static const struct
     { "loot",     SPR_BPAK, 0,  0 },
     { "monster",  SPR_BOSS, 0,  0 },
     { "bird",     SPR_HEAD, 0, 40 },
-    { "corpse",   SPR_TROO, 12, 0 },
+    { "corpse",   SPR_POL5, 0,  0 },
 };
 #define THING_KINDS ((int)(sizeof(s_thing_kind) / sizeof(s_thing_kind[0])))
 

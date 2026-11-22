@@ -12,6 +12,7 @@ A theme replaces, for the program, everything the picture is coloured from:
   PNAMES, TEXTURE1, TEXTURE2   the wall textures: 256 x 256 texels over a cell edge of 128 units (two texels
             to the unit), per kind and wall direction several variants (names CX00.., CY00.. cell, OX/OY own,
             WX/WY wall, TX/TY tower), plain PEX/PEY (empty), STARTAN3 and STONE3 (named by the map), SKY1
+  S_START..S_END   the sprites of the thing kinds, from the templates in assets/figures (figures.py)
   F_START..F_END   the floors: one 256 x 256 flat per cell (row 0 north): the ground in variants with
             joints on the west/south edge or not (LE<variant><edges>), the tops of the kinds (LC.., LO.., LW.., LT..)
   POVTHEME  switches, the light level of all sectors, class and rank of each colour index for
@@ -49,6 +50,7 @@ import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import figures  # noqa: E402
 import sky_art  # noqa: E402
 import theme_day  # noqa: E402
 import theme_art as art  # noqa: E402
@@ -597,6 +599,7 @@ def build_theme(name: str, fog: float | None = None, clouds=None) -> list[tuple[
         lumps.append((flat, data))
     lumps.append(("F_SKY1", bytes([SKY_FIRST]) * 4096))
     lumps.append(("F_END", b""))
+    lumps += figures.sprite_lumps()          # the figures of the thing kinds: the theme's sprite range replaces the IWAD's
     return lumps
 
 

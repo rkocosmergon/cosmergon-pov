@@ -18,6 +18,7 @@ License: GPL-2.0 (see `LICENSE`, unchanged).
   calm of the far floor ("Themes").
 - `tests/test_headless.sh`: smoke test.
 - `tests/test_size.py`, `tools/measure_size.py`: picture size (package P5, "Picture size" below).
+- `tools/ring_art.py`, `tools/ring_samples.py`, `tests/test_ring.py`: the field's rim, a ring of cells one storey high with bunks and shaft portals ("The field's rim").
 - `tests/test_rise.py`, `tools/rise_samples.py`, `tools/measure_rise.py`: cells rise out of the ground and sink into it ("Rise and sink").
 - One upstream change: `doomgeneric/i_system.c` skips the zenity error dialog when
   `POV_NO_ERROR_DIALOG` is defined (set in `Makefile.headless`). The message still goes to stderr.
@@ -135,8 +136,8 @@ corner; angles in degrees, 0 = east, counter-clockwise.
 
 | Line | Meaning | Limits |
 |---|---|---|
-| `cell <x> <y> <kind>` | kind of one cell: `empty`, `cell`, `wall`, `tower` | x, y integers 0..47 |
-| `row <y> <48 characters>` | a whole row, west to east: `.` empty, `#` cell, `=` wall, `T` tower | exactly 48 characters |
+| `cell <x> <y> <kind>` | kind of one cell: `empty`, `cell`, `wall`, `tower`, `own` (capability `own`), and with the capability `ring` the kinds of the field's rim `ring`, `alcove`, `shaftlo`, `shafthi` ("The field's rim") | x, y integers 0..47 |
+| `row <y> <48 characters>` | a whole row, west to east: `.` empty, `#` cell, `=` wall, `T` tower, `O` own, and with the capability `ring` `R` ring, `K` alcove, `P` shaftlo, `Q` shafthi | exactly 48 characters |
 | `thing <id> <kind> <x> <y> <angle>` | places or moves a thing: `marauder`, `loot`, and with the capability `kinds` `monster`, `bird`, `corpse` ("Thing kinds") | id 0..255; 0 <= x, y < 48; angle within +-1,000,000 |
 | `gone <id>` | removes a thing (unknown id: nothing happens) | id 0..255 |
 | `cam <x> <y> <angle>` | camera; the eye is 41 units above the floor of the cell it stands in | as `thing` |
@@ -215,6 +216,7 @@ The file `capabilities` next to the program (built by `make -f Makefile.headless
 | `clouds` | `clouds <seconds>` |
 | `world` | `world`, `cube`, `nocube` |
 | `kinds` | the thing kinds `monster`, `bird`, `corpse` |
+| `ring` | the cell kinds `ring`, `alcove`, `shaftlo`, `shafthi`, the row characters `R`, `K`, `P`, `Q` ("The field's rim") |
 
 **A bridge sends the lines of a word only when the word is in that file** (a missing file: none of them). An older program
 rejects such a line as a whole (counted, harmless), but the picture would lack what the line means. `tests/test_kinds.py` holds
@@ -329,6 +331,7 @@ dimming with distance, flat wall textures per kind and direction, floors, a sky,
     `pov_tex_dshift`. Without a theme, or with a theme without `POVX`, nothing changes (hashes of the pictures of
     `81fb3a0` are a test).
 - Kind `own` (row character `O`): a cell of the viewer's own, same height as `cell`.
+- The kinds of the field's rim have faces of their own ("The field's rim").
 - Sprites (things) are still the IWAD's and are wrong in a theme's palette (noisy colours, the silhouette and the outline stay readable; `tools/kinds_samples.py` draws them in the themes).
 - Upstream fixes needed by a theme (marked `// cosmergon-pov:`): `p_spec.c` (an animated flat that the
   theme's flat range does not hold made `flattranslation[]` writes land in the zone and corrupt lumps),
@@ -337,6 +340,47 @@ dimming with distance, flat wall textures per kind and direction, floors, a sky,
   overview); `--size 672x324` the same in that size with the size in every file name, `--fine` writes
   672 x 324 and 1280 x 640 to `out/muster-fein/`, `--detail` writes `out/muster-detail/` (six viewpoints in A and B,
   both sizes, the overview of A/B/C and the texture sheets). Tests: `python3 -m unittest tests.test_theme tests.test_ink`.
+
+## The field's rim
+
+The edge of the field is a ring of cells around it, one cell thick (indices -1 and `dim`), **one storey high (4 m = 128 units)**; built
+walls inside the field stay half high (64). The program draws what a bridge tells it, cell by cell, in the four kinds
+below; **where** a bunk or a portal sits, the bridge computes from `dim` by the rules of the concept (the concept owns the numbers:
+`konzept-wand-kojen-schacht-2026-08-02.md`, sections 2.1 to 2.5). Nothing about a field's size is known to the program.
+
+| Kind | Row | Meaning | Height |
+|---|---|---|---|
+| `ring` | `R` | a plain stretch of the ring (and the four corners) | 128 |
+| `alcove` | `K` | a bunk (16 a wall: position `i * spacing + spacing // 2`, `spacing = dim // 16`) | 128 |
+| `shaftlo` | `P` | the first of the two cells of a shaft portal (positions 1 and 2 of a wall) | 128 |
+| `shafthi` | `Q` | the second of them | 128 |
+
+`shaftlo` is the cell with the **lower world coordinate along the wall** (x along the walls at the south and north ends of the field,
+y along those at the west and east ends), `shafthi` the one next to it with the higher. The program turns the two halves of the
+portal so that the frame stands round the outside of the pair seen from the field, from any side. A shaft beats a bunk on the same
+cell (a field of 32 cells: position 1 is both). Nothing else changes for the cell: the same height travel (rise and sink), the same
+looks chosen from the world position.
+
+**Drawn, not built.** The map keeps one sector a cell. A bunk and a portal are pictures on the flat face of the ring: a hollow with
+a back panel, wide strokes from the corners of the opening to the corners of the panel (they stay in the picture far away, the
+strokes of the themes fold at their distance), the darker stage inside, the lighter one for floor and back. Measures in texels of the
+face (256 x 256 over one cell edge of 128 units: 64 texels a metre): a bunk 141 x 141 (2.2 m by 2.2 m) in the middle of its cell on
+the floor; a portal 218 rows (3.4 m) high over two cells (512 texels = 8 m), the frame 14 texels in the colour of the bands
+(gold), an arrow up in its left half and one down in its right half. The faces are made of the palette indices of the role `wall` (the
+palette has no free index for a role of its own) and the gold of the bands.
+
+- Faces: `tools/ring_art.py`, variants: ring 4, bunk 4 (a bed, a bed and a lamp, a bed behind a curtain, a shelf and a bench), portal 1
+  (so that the two cells of a portal always fit). Slots and choice by the hash of the world position of the cell as for every kind.
+- Theme lump `POVRING` (optional, 1032 bytes): `POVE`, version 1, 3 reserved bytes, then for ring, alcove, the left and the right half of a portal
+  16 slots of two wall texture names (east/west, north/south); the top faces are the wall's. **A theme without the lump draws the ring like
+  a wall, one storey high**, and so does a run without a theme (the table `s_kind` names the wall's texture). An older program ignores the lump.
+- Without the capability: a program without the word `ring` in `capabilities` rejects the four kind names and the four row characters as a
+  whole (counted, harmless); a bridge sends them only when the word is there and draws its own ring from the cell kinds it has otherwise.
+- The ring's tops are the wall's tops (seen only from a block, eye above 128).
+- The window's own border (the smooth wall at the edge of the 48 x 48 window, the colour `border`) is not part of this: it stays.
+- Samples: `python3 tools/ring_samples.py [--size 672x324] [--dim 32]` writes `out/muster-rand/rand-<A|B|C>-<wand-frontal|wand-schraeg|portal|ecke>-<size>.png`
+  (a field of `dim` cells, the ring placed by the rules above, a few cells inside).
+- Tests: `python3 -m unittest tests.test_ring tests.test_kinds`.
 
 ## The sky (package P7)
 
@@ -379,7 +423,7 @@ the field's level changes, `clouds` once at the start (the world time; live mode
 
 ### Clouds (lumps `POVWLD`, `POVCLS`)
 Upright bodies turned to the viewer at world positions `(x, y, height of the base)` on a periodic tile of 16 km (the nearest
-image is taken, so the sky is the same everywhere); 220 clouds in four layers of base height 450, 650, 900 and 1250 m (+-50) above
+image is taken, so the sky is the same everywhere); 110 clouds in four layers of base height 450, 650, 900 and 1250 m (+-50) above
 the lowest cube, 65 percent of them clustered (sigma 1.8 km) over the middle where the cubes stand, the rest all round; width
 250..650 m times 1.0 to 1.9 by layer, no two of a layer overlapping. The perspective is the planar one: size in points
 `f * width / depth` (depth = distance along the view), centre `cx + f * lateral / depth`, base row
@@ -446,7 +490,7 @@ everything under 8.7 degrees: the sun is over it from about 07:45 to 17:15, the 
 Wind 4 m/s: a cloud 1000 m away crosses 0.23 degrees a second, the nearest ones about three times that. The cloud time is
 the world time: blocking mode (headless, tests) the last `clouds` line (default 0), so a picture depends only on the input; live
 mode adds the engine clock. Live mode redraws when ANY visible cloud has moved a whole point on the picture since the last
-picture (`POV_SkyDirty`: one projection per cloud and tick, 220 a tick), so the nearest cloud sets the rate (the next layer
+picture (`POV_SkyDirty`: one projection per cloud and tick, 110 a tick), so the nearest cloud sets the rate (the next layer
 sets it when the nearest has left). Measured (headless live, 10 s, default place, four directions): **0.4 to 0.8 pictures a
 second at 320 x 200, 0.7 to 1.1 at 672 x 324, 1.9 to 3.3 at 1280 x 800** (computed from the clouds and the geometry in
 `tests.test_sky.Live`).

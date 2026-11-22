@@ -30,6 +30,7 @@ ORIGIN = -MAP_SIZE // 2  # world coordinate of the south-west corner: -3072
 H_EMPTY = 0
 H_WALL = STOREY // 2  # 64
 H_CELL = STOREY  # 128
+H_RING = STOREY  # 128: the field's rim, one storey (konzept-wand-kojen-schacht 2.1: storey = cell height = 4 m)
 TOWER_SHAFT = round(0.95 * STOREY)  # 122
 TOWER_ATTACHMENT = round(0.32 / 1.634 * STOREY)  # 25: deck + battlements (ausbau.js:50,56,66)
 TOWER_TOP = round(0.95 * STOREY + 0.32 / 1.634 * STOREY)  # 147: shaft + deck + battlements

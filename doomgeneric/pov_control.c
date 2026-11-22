@@ -53,12 +53,15 @@
 #define POV_H_EMPTY   0
 #define POV_H_WALL    64
 #define POV_H_CELL    128
+#define POV_H_RING    128           // the field's rim: one storey (4 m)
 #define POV_H_TOWER   147
 #define POV_EYE       41            // eye height above the floor of the cell the camera is in
 #define POV_CELL_SIZE 128           // units
 #define POV_ORIGIN    (-3072)       // world coordinate of the south-west corner of the window
 
-enum { K_EMPTY = 0, K_CELL, K_WALL, K_TOWER, K_OWN, K_COUNT };
+// The rim ring (COSMERGON.md, "The field's rim"): K_RING is a plain stretch, K_ALCOVE a bunk, K_SHAFT_LO and K_SHAFT_HI the
+// two cells of a shaft portal (the one with the lower world coordinate along the wall, and the other).
+enum { K_EMPTY = 0, K_CELL, K_WALL, K_TOWER, K_OWN, K_RING, K_ALCOVE, K_SHAFT_LO, K_SHAFT_HI, K_COUNT };
 
 // Look of each kind. `lower` is the lower wall texture seen on the four edges of a cell of this
 // kind, `flat` its floor (top face). All names exist in freedoom1.wad (tests check this).
@@ -80,6 +83,11 @@ static const struct
     { "wall",  "A-BRICK1", "FLAT10",   POV_H_WALL,  "PWX", "PWY" },
     { "tower", "STONE2",   "FLAT5_4",  POV_H_TOWER, "PTX", "PTY" },
     { "own",   "A-CAMO2",  "GRASS2",   POV_H_CELL,  "POX", "POY" },   // a cell of the viewer's own
+    // the rim ring: without a theme with the lump POVRING it looks like a wall, one storey high
+    { "ring",     "A-BRICK1", "FLAT10", POV_H_RING, "PWX", "PWY" },
+    { "alcove",   "A-BRICK1", "FLAT10", POV_H_RING, "PWX", "PWY" },
+    { "shaftlo",  "A-BRICK1", "FLAT10", POV_H_RING, "PWX", "PWY" },
+    { "shafthi",  "A-BRICK1", "FLAT10", POV_H_RING, "PWX", "PWY" },
 };
 
 // Things: the sprite and frame of each kind, and how high its origin floats above the floor of its cell
@@ -382,6 +390,19 @@ static int ground_edges(int wx, int wy)
     return edges;
 }
 
+// A shaft portal is drawn in two halves (left, right as the viewer sees it). The tables hold, for K_SHAFT_LO, the picture
+// that is wanted when the lower coordinate lies on the viewer's left, for K_SHAFT_HI the other half. d is the direction from
+// the cell to the viewer's cell (0 east, 1 west, 2 north, 3 south), so the viewer looks the other way: a viewer to the east or
+// south looks west or north, where the lower coordinate (y, x) is on the left; one to the west or north has it on the right.
+static int shaft_view(int kind, int d)
+{
+    if ((kind == K_SHAFT_LO || kind == K_SHAFT_HI) && (d == 1 || d == 2))
+    {
+        return kind == K_SHAFT_LO ? K_SHAFT_HI : K_SHAFT_LO;
+    }
+    return kind;
+}
+
 // Gives one cell the look of a kind: its floor flat, and the lower texture on the sidedef of
 // each neighbour that faces it. The wall texture of a step is the lower texture of the sidedef
 // on the LOWER side (r_segs.c R_StoreWallRange: the seg's own sidedef, drawn when the back floor
@@ -411,7 +432,7 @@ static void set_look(int cell, int kind)
         {
             unsigned slot = cell_hash(wx, wy, (unsigned)kind * 8 + (unsigned)d) >> 8 & (POV_SLOTS - 1);
 
-            sides[s_facing[other][opposite(d)]].bottomtexture = s_texnum[kind][slot][d >> 1];
+            sides[s_facing[other][opposite(d)]].bottomtexture = s_texnum[shaft_view(kind, d)][slot][d >> 1];
         }
     }
     s_dirty = 1;
@@ -827,6 +848,10 @@ static int kind_from_char(char c)
     case '=': return K_WALL;
     case 'T': return K_TOWER;
     case 'O': return K_OWN;
+    case 'R': return K_RING;
+    case 'K': return K_ALCOVE;
+    case 'P': return K_SHAFT_LO;
+    case 'Q': return K_SHAFT_HI;
     default: return -1;
     }
 }
@@ -984,7 +1009,7 @@ static const char *parse_line(const unsigned char *line, size_t len, command_t *
 
             if (k < 0)
             {
-                return "bad character in row (use . # = T O)";
+                return "bad character in row (use . # = T O R K P Q)";
             }
             c->row[i] = (unsigned char)k;
         }
@@ -1522,6 +1547,54 @@ static void fog_init(void)
     R_InitLightTables();          // the tables were built at start without the haze
 }
 
+// The rim ring (lump POVRING, optional): 0..3 "POVE", 4 version (1); then for ring, alcove, left half of a shaft portal and
+// right half of it: 16 slots of 2 wall texture names (east/west, north/south). The top faces are the wall's. A theme without
+// the lump shows the ring like a wall, one storey high.
+#define POVRING_LUMP_SIZE (8 + 4 * POV_SLOTS * 2 * 8)
+
+static void ring_variants(void)
+{
+    static const int kinds[4] = { K_RING, K_ALCOVE, K_SHAFT_LO, K_SHAFT_HI };
+    int lump = W_CheckNumForName("POVRING");
+    const unsigned char *data, *q;
+    int k, s, e;
+
+    for (k = 0; k < 4; k++)
+    {
+        for (s = 0; s < POV_SLOTS; s++)
+        {
+            s_texnum[kinds[k]][s][0] = s_texnum[K_WALL][s][0];
+            s_texnum[kinds[k]][s][1] = s_texnum[K_WALL][s][1];
+            for (e = 0; e < 4; e++)
+            {
+                s_flatnum[kinds[k]][s][e] = s_flatnum[K_WALL][s][e];
+            }
+        }
+    }
+    if (lump < 0)
+    {
+        return;
+    }
+    if (W_LumpLength(lump) != POVRING_LUMP_SIZE)
+    {
+        I_Error("pov-control: POVRING must be %d bytes, it has %d", POVRING_LUMP_SIZE, W_LumpLength(lump));
+    }
+    data = W_CacheLumpNum(lump, PU_STATIC);
+    if (memcmp(data, "POVE", 4) != 0 || data[4] != 1)
+    {
+        I_Error("pov-control: POVRING has the wrong magic or version");
+    }
+    q = data + 8;
+    for (k = 0; k < 4; k++)
+    {
+        for (s = 0; s < POV_SLOTS; s++, q += 16)
+        {
+            s_texnum[kinds[k]][s][0] = name_tex(q);
+            s_texnum[kinds[k]][s][1] = name_tex(q + 8);
+        }
+    }
+}
+
 static void variants_init(void)
 {
     int k, s, e;
@@ -1598,6 +1671,7 @@ static void variants_init(void)
             }
         }
     }
+    ring_variants();
 }
 
 static int is_edge(int p, int q)

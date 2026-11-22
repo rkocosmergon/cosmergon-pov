@@ -103,6 +103,7 @@ class Capabilities(unittest.TestCase):
         "daytime": "daytime 0\ndaytime 1439\n",
         "clouds": "clouds 0\nclouds 10000000\n",
         "world": "world 0 0 0 0 128\ncube 1 1 0 0 128\nnocube 1\n",
+        "ring": "cell 3 3 ring\ncell 4 3 alcove\ncell 5 3 shaftlo\ncell 6 3 shafthi\nrow 4 RKPQ" + "." * 44 + "\n",
         "kinds": "thing 1 monster 5 5 0\nthing 2 bird 6 5 0\nthing 3 corpse 7 5 0\nthing 4 marauder 8 5 0\nthing 5 loot 9 5 0\n",
     }
 

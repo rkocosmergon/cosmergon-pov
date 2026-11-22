@@ -52,6 +52,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sky_art  # noqa: E402
 import theme_day  # noqa: E402
 import theme_art as art  # noqa: E402
+import ring_art  # noqa: E402
 
 NAVY = (0x1A, 0x23, 0x32)
 SKY_FIRST = art.SKY_FIRST  # first palette index of the sky bands, 156..; band 0 is at the horizon
@@ -351,6 +352,14 @@ WALL_KINDS = {
     "tower": ("T", (0, 0, 1, 1, 1, 2),
               (0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 0, 1, 2, 3, 4)),
 }
+# the faces of the field's rim (tools/ring_art.py), in the order of the lump POVRING: family letter, the variants, the slots.
+# A shaft portal is two cells wide: its halves have one variant each, so that the two cells of a portal always match.
+RING_KINDS = {
+    "ring": ("R", 4, (0, 0, 1, 1, 2, 2, 3, 3, 0, 1, 2, 0, 1, 2, 3, 0)),
+    "alcove": ("K", 4, (0, 0, 1, 1, 2, 2, 3, 3, 0, 1, 2, 3, 0, 1, 2, 3)),
+    "portal-left": ("G", 1, (0,) * 16),
+    "portal-right": ("H", 1, (0,) * 16),
+}
 GROUND_DENS = (0, 0, 0, 0, 1, 1, 1, 2)
 GROUND_SLOTS = (0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 0)
 TOP_STYLES = {
@@ -364,6 +373,10 @@ WALL_VARIANT_KIND = {("wall", 3): "slit", ("wall", 5): "grate", ("wall", 6): "sl
 
 def wall_names(kind: str, v: int) -> tuple[str, str]:
     return "%sX%02d" % (WALL_KINDS[kind][0], v), "%sY%02d" % (WALL_KINDS[kind][0], v)
+
+
+def ring_names(kind: str, v: int) -> tuple[str, str]:
+    return "%sX%02d" % (RING_KINDS[kind][0], v), "%sY%02d" % (RING_KINDS[kind][0], v)
 
 
 def ground_name(v: int, edges: int) -> str:
@@ -398,6 +411,19 @@ def surfaces() -> dict:
                     art.wall_face(c, rng, d, WALL_VARIANT_KIND.get((kind, v), ""))
                 else:
                     art.tower_face(c, rng, d, I_BAND[axis])
+                tex[name] = c.g
+    wall_ids = I_ROLE["wall"]                     # the rim is built of the stuff of a wall; the portal's frame is gold
+    for kind, (_letter, variants, _slots) in RING_KINDS.items():
+        for v in range(variants):
+            for axis, name in zip("xy", ring_names(kind, v)):
+                c = art.Canvas(wall_ids[axis + "0"], wall_ids[axis + "1"], small_r=11)
+                rng = _rng("ring", kind, v)
+                if kind == "ring":
+                    ring_art.ring_face(c, rng, (0, 1, 1, 2)[v])
+                elif kind == "alcove":
+                    ring_art.alcove_face(c, rng, v, I_BAND[axis])
+                else:
+                    ring_art.portal_half(c, 0 if kind == "portal-left" else 1, I_BAND[axis])
                 tex[name] = c.g
     flat_ids = {"cell": "cell", "own": "own", "wall": "wall", "tower": "tower"}
     for kind, (letter, styles, _slots) in TOP_STYLES.items():
@@ -497,6 +523,17 @@ def povx_lump() -> bytes:
     return bytes(out)
 
 
+def povring_lump() -> bytes:
+    """The faces of the rim (see pov_control.c ring_variants): ring, alcove, left and right half of a portal, 16 slots each."""
+    out = bytearray(b"POVE" + bytes([1, 0, 0, 0]))
+    for kind, (_letter, _variants, slots) in RING_KINDS.items():
+        for s in range(SLOTS):
+            x, y = ring_names(kind, slots[s])
+            out += name8(x) + name8(y)
+    assert len(out) == 1032
+    return bytes(out)
+
+
 def split_patches(rows: list[bytearray]) -> list[bytes]:
     """A 256 x 256 grid as two picture lumps of 128 rows (a texture of two patches: a column of 256 rows would
     not fit one post, and the engine keeps column offsets in 16 bits)."""
@@ -516,6 +553,7 @@ def build_theme(name: str, fog: float | None = None, clouds=None) -> list[tuple[
     lumps: list[tuple[str, bytes]] = [
         ("POVTHEME", theme_lump()),
         ("POVX", povx_lump()),
+        ("POVRING", povring_lump()),
         ("POVINK", povink_lump()),
         ("POVSKY", povsky_lump()),
         ("POVWLD", sky_art.world_lump(clouds)),

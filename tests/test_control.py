@@ -175,7 +175,7 @@ class MeasuresAndAssets(unittest.TestCase):
     def test_c_measures_equal_python(self):
         text = read_text(os.path.join(ROOT, "doomgeneric", "pov_control.c"))
         want = {"POV_H_EMPTY": pm.H_EMPTY, "POV_H_WALL": pm.H_WALL, "POV_H_CELL": pm.H_CELL,
-                "POV_H_TOWER": pm.TOWER_TOP, "POV_EYE": pm.EYE_HEIGHT, "POV_CELL_SIZE": pm.CELL_SIZE}
+                "POV_H_RING": pm.H_RING, "POV_H_TOWER": pm.TOWER_TOP, "POV_EYE": pm.EYE_HEIGHT, "POV_CELL_SIZE": pm.CELL_SIZE}
         for name, value in want.items():
             m = re.search(r"#define %s\s+\(?(-?\d+)\)?" % name, text)
             self.assertIsNotNone(m, name)
@@ -187,7 +187,7 @@ class MeasuresAndAssets(unittest.TestCase):
         text = read_text(os.path.join(ROOT, "doomgeneric", "pov_control.c"))
         table = re.search(r"s_kind\[K_COUNT\] = \{(.*?)\n\};", text, re.S).group(1)
         rows = re.findall(r'\{ "(\w+)",\s+"([^"]+)",\s+"([^"]+)"', table)
-        self.assertEqual([r[0] for r in rows], ["empty", "cell", "wall", "tower", "own"])
+        self.assertEqual([r[0] for r in rows], ["empty", "cell", "wall", "tower", "own", "ring", "alcove", "shaftlo", "shafthi"])
         with open(IWAD, "rb") as handle:
             data = handle.read()
         count, off = struct.unpack("<ii", data[4:12])
@@ -216,9 +216,12 @@ class MeasuresAndAssets(unittest.TestCase):
         # the sprite frames the table uses (8 rotations or one for all): TROOA, BPAKA
         self.assertTrue(any(n.startswith("TROOA") for n in names))
         self.assertTrue(any(n.startswith("BPAKA") for n in names))
-        # the five kinds look different: five distinct lower textures and five distinct flats
-        self.assertEqual(len({r[1] for r in rows}), 5)
-        self.assertEqual(len({r[2] for r in rows}), 5)
+        # the five kinds look different: five distinct lower textures and five distinct flats; the four kinds of the
+        # rim ring wear the wall's look without a theme that draws them
+        self.assertEqual(len({r[1] for r in rows[:5]}), 5)
+        self.assertEqual(len({r[2] for r in rows[:5]}), 5)
+        for row in rows[5:]:
+            self.assertEqual(row[1:], rows[2][1:], row[0])
 
     def test_flat_map_is_all_empty_and_start_in_the_middle(self):
         lumps = dict(make_map.build_map("flat"))

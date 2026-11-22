@@ -26,7 +26,7 @@ UNITS_PER_M = 32
 PERIOD_M = 16000.0                     # the tile of clouds repeats every 16 km (the clouds around any place)
 WIND_M_S = 4.0                         # to the east, every cloud alike (a light breeze: 14 km/h)
 LAYERS_M = (450.0, 650.0, 900.0, 1250.0)    # height of the cloud bases above the lowest cube
-N_CLOUDS = 220
+N_CLOUDS = 110
 SPR_W, SPR_H, SPR_MIPS = 1024, 320, 4
 N_COMPLEX, N_SIMPLE = 5, 3             # shapes 0..4 have many bumps, 5..7 few (for the small, far clouds)
 N_STARS = 240
@@ -131,7 +131,7 @@ def sprite_lump() -> bytes:
 # ---- the clouds in the world
 
 def cloud_list() -> list[tuple[int, int, int, int, int]]:
-    """(x, y, height of the base, width, shape) in units: 220 clouds on the periodic tile, in four layers (a
+    """(x, y, height of the base, width, shape) in units: 110 clouds on the periodic tile, in four layers (a
     cloud only where no other of its layer is), wider and bigger bodies higher up; small ones have the calm shapes."""
     rng = random.Random("cosmergon-pov/clouds")
     placed: list[list[tuple[float, float, float]]] = [[] for _ in LAYERS_M]

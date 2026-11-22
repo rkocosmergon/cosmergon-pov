@@ -12,6 +12,7 @@ import hashlib
 import itertools
 import math
 import os
+import struct
 import subprocess
 import sys
 import tempfile
@@ -94,6 +95,18 @@ def sun_scene(minute, size, seconds=0, theme="wueste"):
     angle = sky_art.view_towards(minute)
     data = "daytime %d\nclouds %d\ncam %s %.3f\nnext\nquit\n" % (minute, seconds, EYE, angle)
     return render(data, theme, size)
+
+
+class CloudCount(unittest.TestCase):
+    def test_half_as_many_clouds_as_before(self):
+        # 220 clouds were too many; 110 are the first half of that list (same places, sizes and layers)
+        clouds = sky_art.cloud_list()
+        self.assertEqual(len(clouds), 110)
+        lump = sky_art.world_lump()
+        self.assertEqual(struct.unpack_from("<i", lump, 20)[0], 110)       # the count in lump POVWLD
+        self.assertEqual(len(lump), 24 + 20 * 110)
+        for layer in range(4):                                              # every layer keeps its share
+            self.assertGreaterEqual(len(clouds[layer::4]), 27)
 
 
 class Line(unittest.TestCase):

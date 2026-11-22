@@ -195,6 +195,8 @@ R_RenderMaskedSegRange
 //  textures.
 // CALLED: CORE LOOPING ROUTINE.
 //
+// cosmergon-pov: top of the rim (one storey, 128 units)
+#define POV_CAP (128*FRACUNIT)
 #define HEIGHTBITS		12
 #define HEIGHTUNIT		(1<<HEIGHTBITS)
 
@@ -556,6 +558,12 @@ R_StoreWallRange
 	}
 	
 			
+#ifdef POV_VIEW_ONLY
+	// cosmergon-pov: a recess (back ceiling under the 4 m of the rim) in a wall that is 4 m high: the wall above its
+	// opening ends at the top of the rim, above it the front sector's ceiling (the sky) shows
+	if (worldhigh < POV_CAP - viewz && worldtop > POV_CAP - viewz)
+	    worldtop = POV_CAP - viewz;
+#endif
 	if (worldlow != worldbottom 
 	    || backsector->floorpic != frontsector->floorpic
 	    || backsector->lightlevel != frontsector->lightlevel)

@@ -29,63 +29,86 @@ import ppm2png  # noqa: E402
 THEME_ORDER = (("A", "wueste"), ("B", "gelbestadt"), ("C", "blaustadt"))
 SLOTS_PER_WALL = 16
 SHAFT_POS = (1, 2)                  # the two cells of a shaft, from the start of a wall (lower coordinate first)
-VIEW_NAMES = ("wand-frontal", "wand-schraeg", "portal", "ecke")
+GRID = 48
+FRAMES = (1, 1, 1, 1, 60, 1, 1)               # the shaft floor travels 64 units in 21 steps: the view inside waits for it
+VIEW_NAMES = ("koje-frontal", "wand-schraeg", "aus-der-koje", "schacht-schraeg", "schacht-innen", "ecke", "schacht-tief")
 
 
-def ring_cells(dim: int, ox: int, oy: int) -> list[tuple[int, int, str]]:
-    """The ring of a field of dim x dim cells whose cell 0, 0 lies at window cell (ox, oy): (x, y, kind). A bunk at
-    spacing // 2 + i * spacing (spacing = dim // 16), a shaft at the positions 1 and 2 of every wall, the shaft before
-    the bunk; everything else `ring`. x east, y north; a wall runs along its lower coordinate."""
-    spacing = dim // SLOTS_PER_WALL
-    bunks = {i * spacing + spacing // 2 for i in range(SLOTS_PER_WALL)}
-    cells: dict[tuple[int, int], str] = {}
-    for x in range(-1, dim + 1):
-        for y in range(-1, dim + 1):
-            if 0 <= x < dim and 0 <= y < dim:
-                continue
-            cells[(ox + x, oy + y)] = "ring"
-    for p in range(dim):
-        kind = "alcove" if p in bunks else "ring"
-        shaft = {SHAFT_POS[0]: "shaftlo", SHAFT_POS[1]: "shafthi"}.get(p)
-        for x, y in ((ox + p, oy - 1), (ox - 1, oy + p), (ox + p, oy + dim), (ox + dim, oy + p)):
-            cells[(x, y)] = shaft or kind
-    return [(x, y, k) for (x, y), k in sorted(cells.items())]
+def rim_char(side: int, x: int, y: int) -> str | None:
+    """The row character the bridge sends for the field square (x east, y SOUTH) (pov_bridge._rim): R, K, P, Q or None."""
+    if not (-1 <= x <= side and -1 <= y <= side) or (0 <= x < side and 0 <= y < side):
+        return None
+    along = x if y in (-1, side) and 0 <= x < side else y if 0 <= y < side else None
+    if along is None:
+        return "R"
+    if along in SHAFT_POS:
+        flipped = x in (-1, side)
+        return "P" if along == (SHAFT_POS[1] if flipped else SHAFT_POS[0]) else "Q"
+    spacing = side // SLOTS_PER_WALL
+    if spacing and along % spacing == spacing // 2 and along // spacing < SLOTS_PER_WALL:
+        return "K"
+    return "R"
 
 
-def field_cells(ox: int, oy: int) -> list[tuple[int, int, str]]:
-    """A few things inside the field, so that the rim is seen against the usual surroundings."""
-    out = []
+def window(dim: int) -> tuple[int, int]:
+    """Where the bridge puts the window of a field that fits it (pov_bridge._axis): the field square at its west, south."""
+    first, last = -1, dim + 1 - GRID
+    return ((first + last) // 2,) * 2
+
+
+def control_lines(dim: int, views_in: list[str] | None = None, shaft_h: int | None = None) -> list[str]:
+    """What the bridge sends: world, origin, 48 rows (x east, program y north: row 0 is the field row oy + 47), the field's
+    things, then the views. The program's world y is the field's y negated."""
+    ox, oy = window(dim)
+    lines = ["world 0 0 0 0 %d" % dim, "origin %d %d" % (ox, -(oy + GRID - 1))]
+    inside = {}
     for dx, dy in ((9, 9), (10, 9), (9, 10), (15, 14), (16, 14), (17, 14)):
-        out.append((ox + dx, oy + dy, "cell"))
-    out += [(ox + 20, oy + 6, "own"), (ox + 24, oy + 20, "tower"), (ox + 12, oy + 22, "wall"), (ox + 13, oy + 22, "wall")]
-    return out
-
-
-def views(dim: int, ox: int, oy: int) -> list[tuple[float, float, float]]:
-    """(x, y, angle) of the four views for the south wall (y = oy - 1) and the south-west corner."""
-    return [
-        (ox + 7.0, oy + 3.0, 270.0),            # face on to the south wall: the bunks at the positions 5, 7, 9
-        (ox + 2.2, oy + 1.6, 12.0),             # slanting along the south wall, looking east
-        (ox + 3.0, oy + 5.0, 255.0),            # at the shaft: positions 1 and 2 (x = ox + 1, ox + 2)
-        (ox + 6.0, oy + 6.0, 225.0),            # the south-west corner (the shaft of each wall near it)
-    ]
-
-
-def control_lines(dim: int, ox: int, oy: int) -> list[str]:
-    lines = ["cell %d %d %s" % c for c in ring_cells(dim, ox, oy) + field_cells(ox, oy)]
-    for x, y, angle in views(dim, ox, oy):
-        lines += ["cam %.2f %.2f %.1f" % (x, y, angle), "next"]
-    lines.append("quit")
+        inside[(dx, dy)] = "#"
+    inside[(20, 6)] = "O"
+    inside[(24, 20)] = "T"
+    inside[(12, 22)] = "="
+    inside[(13, 22)] = "="
+    for py in range(GRID):
+        row = ""
+        for px in range(GRID):
+            fx, fy = ox + px, oy + GRID - 1 - py
+            row += rim_char(dim, fx, fy) or inside.get((fx, fy), ".")
+        lines.append("row %d %s" % (py, row))
     return lines
 
 
-def run_engine(theme_wad: str, work: str, size: str, dim: int, ox: int, oy: int) -> list[str]:
+def view_lines(dim: int, shaft_h: int) -> list[str]:
+    """(x, y, angle) in program coordinates. The south wall of a field of 32 is the window row 7 (face at y = 8), its
+    bunks at the window columns 11, 13, 15 ..., the shaft at 9 and 10."""
+    ox, oy = window(dim)
+    south_face = oy + GRID - 1 - dim          # window row of the south ring
+    face = south_face + 1.0                   # its north face: the field side
+    v = [
+        (13.5, face + 1.5, 270.0),            # a bunk face on from 6 m (1.5 cells)
+        (10.2, face + 0.7, 5.0),              # slanting along the wall, looking east: several bunks
+        (13.5, face - 0.5, 90.0),             # from inside a bunk into the field
+        (14.0, face + 3.0, 217.0),            # the shaft (window columns 9 and 10) slanting
+        (10.0, face - 0.85, 90.0),            # inside the shaft (at its back), the floor at half height
+        (12.0, 12.0, 225.0),                  # the south-west corner
+        (10.5, face + 1.6, 270.0),            # from the field into the shaft whose floor is at half height
+    ]
+    out = []
+    for i, (x, y, a) in enumerate(v):
+        if i == 3:
+            out.append("shaft 9 %d 0" % south_face)
+        if i == 4:
+            out.append("shaft 9 %d %d" % (south_face, shaft_h))
+        out += ["cam %.2f %.2f %.1f" % (x, y, a), "next %d" % FRAMES[i]]
+    return out
+
+
+def run_engine(theme_wad: str, work: str, size: str, dim: int) -> list[str]:
     binary = os.path.join(ROOT, "doomgeneric", "cosmergon-pov-headless")
     cmd = [binary, "-iwad", os.path.join(ROOT, "assets", "freedoom", "freedoom1.wad"),
            "-file", os.path.join(ROOT, "assets", "cosmergon.wad"), "-pov-theme", theme_wad, "-pov-control",
            "-warp", "1", "1", "-pov-size", size]
     os.makedirs(work, exist_ok=True)
-    proc = subprocess.run(cmd, input="\n".join(control_lines(dim, ox, oy)) + "\n", text=True,
+    proc = subprocess.run(cmd, input="\n".join(control_lines(dim) + view_lines(dim, -64) + ["quit"]) + "\n", text=True,
                           env=dict(os.environ, POV_OUT=work), capture_output=True, check=False)
     if proc.returncode != 0:
         sys.stderr.write(proc.stderr)
@@ -100,7 +123,6 @@ def main() -> int:
     ap.add_argument("--dim", type=int, default=32)
     args = ap.parse_args()
     out = os.path.abspath(args.out)
-    ox = oy = (48 - args.dim) // 2
     work = os.path.join(out, "_ppm")
     shutil.rmtree(work, ignore_errors=True)
     os.makedirs(out, exist_ok=True)
@@ -109,9 +131,10 @@ def main() -> int:
             wad = os.path.join(out, "_theme-%s.wad" % name)
             with open(wad, "wb") as handle:
                 handle.write(make_theme.wad_bytes(make_theme.build_theme(name)))
-            ppms = run_engine(wad, os.path.join(work, name), args.size, args.dim, ox, oy)
+            ppms = run_engine(wad, os.path.join(work, name), args.size, args.dim)
             os.remove(wad)
-            for view, ppm in zip(VIEW_NAMES, ppms):
+            last = [sum(FRAMES[:i + 1]) - 1 for i in range(len(FRAMES))]
+            for view, ppm in zip(VIEW_NAMES, [ppms[i] for i in last]):
                 w, h, pix = ppm2png.read_ppm(ppm)
                 ppm2png.write_png(os.path.join(out, "rand-%s-%s-%s.png" % (letter, view, args.size)), w, h, pix)
     finally:

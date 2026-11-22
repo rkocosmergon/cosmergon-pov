@@ -421,9 +421,9 @@ def surfaces() -> dict:
                 if kind == "ring":
                     ring_art.ring_face(c, rng, (0, 1, 1, 2)[v])
                 elif kind == "alcove":
-                    ring_art.alcove_face(c, rng, v, I_BAND[axis])
+                    ring_art.ring_face(c, rng, (0, 1, 1, 2)[v])     # a bunk is a real recess: its faces are the rim's
                 else:
-                    ring_art.portal_half(c, 0 if kind == "portal-left" else 1, I_BAND[axis])
+                    ring_art.gold_face(c, I_BAND[axis])             # a shaft: gold lintel and side walls
                 tex[name] = c.g
     flat_ids = {"cell": "cell", "own": "own", "wall": "wall", "tower": "tower"}
     for kind, (letter, styles, _slots) in TOP_STYLES.items():

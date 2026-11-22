@@ -39,6 +39,7 @@
 #include "r_data.h"
 #include "r_draw.h"
 #include "r_main.h"
+#include "r_sky.h"
 #include "r_state.h"
 #include "tables.h"
 #include "w_wad.h"
@@ -57,6 +58,11 @@
 #define POV_H_TOWER   147
 #define POV_EYE       41            // eye height above the floor of the cell the camera is in
 #define POV_CELL_SIZE 128           // units
+#define POV_CEIL_SKY    512         // the ceiling of every cell but a recess: the sky
+#define POV_CEIL_ALCOVE 70          // a bunk: 2.2 m (konzept-wand-kojen-schacht 2.4)
+#define POV_CEIL_SHAFT  109         // a shaft portal: 3.4 m (2.5)
+#define POV_LIFT_MIN    (-512)      // `shaft`: the floor of a shaft, units
+#define POV_LIFT_MAX    100
 #define POV_ORIGIN    (-3072)       // world coordinate of the south-west corner of the window
 
 // The rim ring (COSMERGON.md, "The field's rim"): K_RING is a plain stretch, K_ALCOVE a bunk, K_SHAFT_LO and K_SHAFT_HI the
@@ -77,17 +83,18 @@ static const struct
     int         height;
     const char *theme_x;
     const char *theme_y;
+    int         ceiling;                // height of the ceiling (units); POV_CEIL_SKY = the sky, 512
 } s_kind[K_COUNT] = {
-    { "empty", "STARTAN3", "FLOOR4_8", POV_H_EMPTY, "PEX", "PEY" },   // the state of the generated map
-    { "cell",  "A-CAMO1",  "GRASS1",   POV_H_CELL,  "PCX", "PCY" },
-    { "wall",  "A-BRICK1", "FLAT10",   POV_H_WALL,  "PWX", "PWY" },
-    { "tower", "STONE2",   "FLAT5_4",  POV_H_TOWER, "PTX", "PTY" },
-    { "own",   "A-CAMO2",  "GRASS2",   POV_H_CELL,  "POX", "POY" },   // a cell of the viewer's own
+    { "empty", "STARTAN3", "FLOOR4_8", POV_H_EMPTY, "PEX", "PEY", POV_CEIL_SKY },   // the state of the generated map
+    { "cell",  "A-CAMO1",  "GRASS1",   POV_H_CELL,  "PCX", "PCY", POV_CEIL_SKY },
+    { "wall",  "A-BRICK1", "FLAT10",   POV_H_WALL,  "PWX", "PWY", POV_CEIL_SKY },
+    { "tower", "STONE2",   "FLAT5_4",  POV_H_TOWER, "PTX", "PTY", POV_CEIL_SKY },
+    { "own",   "A-CAMO2",  "GRASS2",   POV_H_CELL,  "POX", "POY", POV_CEIL_SKY },   // a cell of the viewer's own
     // the rim ring: without a theme with the lump POVRING it looks like a wall, one storey high
-    { "ring",     "A-BRICK1", "FLAT10", POV_H_RING, "PWX", "PWY" },
-    { "alcove",   "A-BRICK1", "FLAT10", POV_H_RING, "PWX", "PWY" },
-    { "shaftlo",  "A-BRICK1", "FLAT10", POV_H_RING, "PWX", "PWY" },
-    { "shafthi",  "A-BRICK1", "FLAT10", POV_H_RING, "PWX", "PWY" },
+    { "ring",     "A-BRICK1", "FLAT10", POV_H_RING, "PWX", "PWY", POV_CEIL_SKY },
+    { "alcove",   "A-BRICK1", "FLAT10", POV_H_EMPTY, "PWX", "PWY", POV_CEIL_ALCOVE },
+    { "shaftlo",  "A-BRICK1", "FLAT10", POV_H_EMPTY, "PWX", "PWY", POV_CEIL_SHAFT },
+    { "shafthi",  "A-BRICK1", "FLAT10", POV_H_EMPTY, "PWX", "PWY", POV_CEIL_SHAFT },
 };
 
 // Things: the sprite and frame of each kind, and how high its origin floats above the floor of its cell
@@ -131,7 +138,16 @@ static unsigned long s_lines = 0;
 static unsigned long s_rejected = 0;
 static int s_summary_done = 0;
 
-static unsigned char s_kind_of[POVC_CELLS];     // the kind a cell has been given (its target; the floor may still travel)
+static unsigned char s_kind_of[POVC_CELLS];     // the kind a cell has (its target; the floor may still travel), see eff_kind
+static unsigned char s_req[POVC_CELLS];         // the kind the last `cell` / `row` line asked for
+static unsigned char s_cover[POVC_CELLS];       // 1: the cell lies behind a recess and is a wall (the back of a bunk or a shaft)
+static short s_covering[POVC_CELLS];            // the cell that this recess cell covers (its outer neighbour), -1 none
+static signed char s_open[POVC_CELLS];          // a recess: the direction (0 east, 1 west, 2 north, 3 south) of the field, -1 unknown
+static short s_lift[POVC_CELLS];                // a shaft cell: its floor in units (`shaft` line)
+static fixed_t s_floor[POVC_CELLS];             // the floor the cell has now (travelling or at rest)
+static fixed_t s_tgt[POVC_CELLS];               // the floor it travels to
+static int s_world_dim = 128;                   // `world`: the field's size in cells (the rim lies at -1 and dim)
+static short s_ceil_flat = 0;                   // the ceiling of a recess
 
 // Rise and sink (COSMERGON.md, "Rise and sink"): a floor never jumps, except when the window is set anew.
 // A moving cell has a start height, a target height, a start step and a length in steps. The clock counts
@@ -390,17 +406,45 @@ static int ground_edges(int wx, int wy)
     return edges;
 }
 
-// A shaft portal is drawn in two halves (left, right as the viewer sees it). The tables hold, for K_SHAFT_LO, the picture
-// that is wanted when the lower coordinate lies on the viewer's left, for K_SHAFT_HI the other half. d is the direction from
-// the cell to the viewer's cell (0 east, 1 west, 2 north, 3 south), so the viewer looks the other way: a viewer to the east or
-// south looks west or north, where the lower coordinate (y, x) is on the left; one to the west or north has it on the right.
-static int shaft_view(int kind, int d)
+static int is_recess(int kind)
 {
-    if ((kind == K_SHAFT_LO || kind == K_SHAFT_HI) && (d == 1 || d == 2))
+    return kind == K_ALCOVE || kind == K_SHAFT_LO || kind == K_SHAFT_HI;
+}
+
+static int is_shaft(int kind)
+{
+    return kind == K_SHAFT_LO || kind == K_SHAFT_HI;
+}
+
+// The kind a cell really has: the one asked for, but behind a recess it is the rim (the back wall of a bunk or a shaft:
+// nothing exists beyond the rim, the neighbour is raised to the height of the rim and looks like it).
+static int eff_kind(int cell)
+{
+    const int k = s_req[cell];
+
+    if (s_cover[cell] && s_kind[k].height < POV_H_RING)
     {
-        return kind == K_SHAFT_LO ? K_SHAFT_HI : K_SHAFT_LO;
+        return K_RING;
     }
-    return kind;
+    return k;
+}
+
+// The floor a kind gives a cell: a shaft's is set by `shaft`.
+static fixed_t want_height(int cell, int kind)
+{
+    return is_shaft(kind) ? (fixed_t)s_lift[cell] * FRACUNIT : (fixed_t)s_kind[kind].height * FRACUNIT;
+}
+
+// Floor and ceiling of the cell's sector. A recess has a ceiling of its own (not the sky): the wall above its opening
+// is drawn by the engine up to the top of the rim (r_segs.c, POV_CAP).
+static void sector_apply(int cell)
+{
+    sector_t *sector = &sectors[cell];
+    const int ceiling = s_kind[s_kind_of[cell]].ceiling;
+
+    sector->floorheight = s_floor[cell];
+    sector->ceilingheight = ceiling * FRACUNIT;
+    sector->ceilingpic = ceiling == POV_CEIL_SKY ? skyflatnum : s_ceil_flat;
 }
 
 // Gives one cell the look of a kind: its floor flat, and the lower texture on the sidedef of
@@ -409,6 +453,9 @@ static int shaft_view(int kind, int d)
 // is higher). So the texture seen from outside a cell of kind K sits on the neighbour's side.
 // The lower texture is pegged to the higher floor (no ML_DONTPEGBOTTOM on any line): its top row
 // lies on the top edge of the cell, so a travelling cell carries its texture with it.
+// The upper texture of the same sidedef is the wall over the opening of a recess (the lines carry ML_DONTPEGTOP: the
+// top row of the texture lies on the top of the rim). A shaft is framed in gold: its lintel, and the side walls
+// inside it (the rim cells next to it); its back wall is the rim like any other.
 static void set_look(int cell, int kind)
 {
     int d;
@@ -416,14 +463,15 @@ static void set_look(int cell, int kind)
 
     const int wx = s_origin_x + cell % POVC_GRID;
     const int wy = s_origin_y + cell / POVC_GRID;
+    const int fk = is_recess(kind) ? K_EMPTY : kind;      // the floor of a recess is the ground of the field
     int edges = 0;
 
     s_look_of[cell] = (unsigned char)kind;
-    if (kind == K_EMPTY)
+    if (fk == K_EMPTY)
     {
         edges = ground_edges(wx, wy);
     }
-    sector->floorpic = s_flatnum[kind][cell_hash(wx, wy, (unsigned)kind * 8 + 7) >> 8 & (POV_SLOTS - 1)][edges];
+    sector->floorpic = s_flatnum[fk][cell_hash(wx, wy, (unsigned)fk * 8 + 7) >> 8 & (POV_SLOTS - 1)][edges];
     for (d = 0; d < 4; d++)
     {
         int other = neighbour(cell, d);
@@ -431,8 +479,24 @@ static void set_look(int cell, int kind)
         if (other >= 0)
         {
             unsigned slot = cell_hash(wx, wy, (unsigned)kind * 8 + (unsigned)d) >> 8 & (POV_SLOTS - 1);
+            short tex = s_texnum[kind][slot][d >> 1];
+            short top = tex;
+            const int ok = s_kind_of[other];
 
-            sides[s_facing[other][opposite(d)]].bottomtexture = s_texnum[shaft_view(kind, d)][slot][d >> 1];
+            if (is_shaft(kind))
+            {
+                tex = top = s_texnum[K_SHAFT_LO][slot][d >> 1];
+            }
+            else if (is_shaft(ok) && s_open[other] >= 0 && d != s_open[other] && (kind == K_RING || kind == K_ALCOVE))
+            {
+                tex = s_texnum[K_SHAFT_LO][slot][d >> 1];       // the side wall of a shaft
+            }
+            else if (is_shaft(ok) && s_open[other] >= 0 && d == opposite(s_open[other]) && kind == K_EMPTY)
+            {
+                tex = s_texnum[K_SHAFT_LO][slot][d >> 1];       // the sill: the wall under the opening is the shaft's
+            }
+            sides[s_facing[other][opposite(d)]].bottomtexture = tex;
+            sides[s_facing[other][opposite(d)]].toptexture = top;
         }
     }
     s_dirty = 1;
@@ -456,22 +520,14 @@ static void moving_remove(int cell)
 // now looks empty.
 static void rise_finish(int cell)
 {
-    sectors[cell].floorheight = s_rise_to[cell];
+    s_floor[cell] = s_rise_to[cell];
+    sector_apply(cell);
     moving_remove(cell);
     if (s_kind_of[cell] == K_EMPTY)
     {
         set_look(cell, K_EMPTY);
     }
     s_dirty = 1;
-}
-
-// The cell takes its kind at once: no travel.
-static void set_kind_now(int cell, int kind)
-{
-    moving_remove(cell);
-    s_kind_of[cell] = (unsigned char)kind;
-    sectors[cell].floorheight = s_kind[kind].height * FRACUNIT;
-    set_look(cell, kind);
 }
 
 // Is the cell written in the snap (the window is being set anew)? Marks it as written.
@@ -511,28 +567,35 @@ static void snap_open(void)
     s_snap_started = 0;
 }
 
-// Sets the kind of one cell (the lines `cell` and `row`). A cell whose height changes travels from the
-// height it has now to the new one; one that already has the kind, or any cell in the snap, changes nothing
+// Brings a cell to the kind and floor it should have (eff_kind, want_height). A cell whose height changes travels from the
+// height it has now to the new one; one that already has both, or any cell in the snap (`immediate`), changes nothing
 // on the way. A rising cell wears the look of its new kind from the first step; a cell that sinks to nothing
 // keeps its look until it is down; a change between two raised kinds takes the new look at once and the
-// height travels; a change between kinds of one height (cell and own) is at once.
-static void set_kind(int cell, int kind)
+// height travels; a change between kinds of one height (cell and own) is at once. The ceiling of a recess is at once.
+static void settle(int cell, int immediate)
 {
-    const fixed_t target = s_kind[kind].height * FRACUNIT;
-    const fixed_t now = sectors[cell].floorheight;
+    const int kind = eff_kind(cell);
+    const fixed_t target = want_height(cell, kind);
+    const fixed_t now = s_floor[cell];
     long long dist;
     int steps;
 
-    if (snap_takes(cell) || s_rise_steps == 0)
+    if (immediate || s_rise_steps == 0)
     {
-        set_kind_now(cell, kind);
+        moving_remove(cell);
+        s_kind_of[cell] = (unsigned char)kind;
+        s_floor[cell] = s_tgt[cell] = target;
+        sector_apply(cell);
+        set_look(cell, kind);
         return;
     }
-    if (kind == s_kind_of[cell])
+    if (kind == s_kind_of[cell] && target == s_tgt[cell])
     {
         return;
     }
     s_kind_of[cell] = (unsigned char)kind;
+    s_tgt[cell] = target;
+    sector_apply(cell);
     if (target == now)
     {
         moving_remove(cell);
@@ -563,6 +626,117 @@ static void set_kind(int cell, int kind)
     s_dirty = 1;
 }
 
+// A recess (bunk, shaft) lies in the rim; its back is the cell on the other side from the field. The field's size and
+// place come from `world` (dim) and `origin` (the world coordinate of window cell 0, 0; the bridge sends the field's x as
+// world x and the negated field y as world y): the rim is the world column -1 (opens east) and dim (west), the world row
+// 1 (opens south, the north wall) and -dim (opens north). -1: not a recess or not on the rim.
+static int recess_open(int cell, int kind)
+{
+    const int wx = s_origin_x + cell % POVC_GRID;
+    const int wy = s_origin_y + cell / POVC_GRID;
+
+    if (!is_recess(kind))
+    {
+        return -1;
+    }
+    if (wx == -1) return 0;
+    if (wx == s_world_dim) return 1;
+    if (wy == 1) return 3;
+    if (wy == -s_world_dim) return 2;
+    return -1;
+}
+
+// Brings the cell behind a recess up to date (a wall) and lets go of the one that it covered before.
+static void cover_refresh(int cell)
+{
+    const int open = recess_open(cell, s_req[cell]);
+    const int outer = open >= 0 ? neighbour(cell, opposite(open)) : -1;
+    const int old = s_covering[cell];
+
+    s_open[cell] = (signed char)open;
+    if (old == outer)
+    {
+        return;
+    }
+    s_covering[cell] = (short)outer;
+    if (old >= 0)
+    {
+        s_cover[old] = 0;
+        settle(old, s_snap);
+    }
+    if (outer >= 0)
+    {
+        s_cover[outer] = 1;
+        settle(outer, s_snap);
+    }
+}
+
+static void relook_neighbours(int cell)
+{
+    int d;
+
+    for (d = 0; d < 4; d++)
+    {
+        int other = neighbour(cell, d);
+
+        if (other >= 0)
+        {
+            set_look(other, s_look_of[other]);
+        }
+    }
+}
+
+// The cell takes its kind at once: no travel.
+static void set_kind_now(int cell, int kind)
+{
+    s_req[cell] = (unsigned char)kind;
+    cover_refresh(cell);
+    settle(cell, 1);
+}
+
+// Sets the kind of one cell (the lines `cell` and `row`).
+static void set_kind(int cell, int kind)
+{
+    const int was = is_shaft(s_req[cell]);
+    const int immediate = snap_takes(cell);
+
+    if (kind == s_req[cell] && !immediate)
+    {
+        return;
+    }
+    s_req[cell] = (unsigned char)kind;
+    cover_refresh(cell);
+    settle(cell, immediate);
+    if (was || is_shaft(kind))
+    {
+        relook_neighbours(cell);      // the faces next to a shaft are gold
+    }
+}
+
+// `shaft <x> <y> <height>`: the floor of the shaft that has the cell (both of its cells), in units.
+static void shaft_set(int cell, int h)
+{
+    s_lift[cell] = (short)h;
+    settle(cell, s_snap);
+}
+
+static void shaft_line(int cell, int h)
+{
+    int d;
+    const int kind = s_req[cell];
+
+    shaft_set(cell, h);
+    for (d = 0; d < 4; d++)
+    {
+        int other = neighbour(cell, d);
+
+        if (other >= 0 && is_shaft(s_req[other]) && is_shaft(kind) && s_req[other] != kind)
+        {
+            shaft_set(other, h);
+        }
+    }
+}
+
 // The floor of a travelling cell at the clock: smoothstep 3t^2 - 2t^3 in integers (t = k / n), exact at both
 // ends, monotone, never outside [from, to].
 static fixed_t rise_height(int cell)
@@ -589,7 +763,8 @@ static void rise_update(void)
             rise_finish(cell);      // swaps the last travelling cell into slot i: look at i again
             continue;
         }
-        sectors[cell].floorheight = rise_height(cell);
+        s_floor[cell] = rise_height(cell);
+        sector_apply(cell);
         i++;
     }
 }
@@ -721,7 +896,7 @@ static void commit(void)
 // ---------------------------------------------------------------------------------------
 // Parser: one line -> one validated command. Nothing is applied before the whole line is valid.
 // ---------------------------------------------------------------------------------------
-typedef enum { OP_CELL, OP_ROW, OP_THING, OP_GONE, OP_CAM, OP_LIGHT, OP_NEXT, OP_SIZE, OP_ORIGIN, OP_DAYTIME, OP_CLOUDS, OP_WORLD, OP_CUBE, OP_NOCUBE, OP_QUIT } op_t;
+typedef enum { OP_CELL, OP_ROW, OP_THING, OP_GONE, OP_CAM, OP_LIGHT, OP_NEXT, OP_SIZE, OP_ORIGIN, OP_DAYTIME, OP_CLOUDS, OP_WORLD, OP_CUBE, OP_NOCUBE, OP_SHAFT, OP_QUIT } op_t;
 
 typedef struct
 {
@@ -1133,6 +1308,19 @@ static const char *parse_line(const unsigned char *line, size_t len, command_t *
     {
         return parse_world(tok, ntok, c);
     }
+    if (strcmp(tok[0], "shaft") == 0)
+    {
+        if (ntok != 4)
+        {
+            return "shaft needs <x> <y> <height>";
+        }
+        c->op = OP_SHAFT;
+        if ((err = parse_cell_coord(tok[1], &c->a)) != NULL || (err = parse_cell_coord(tok[2], &c->b)) != NULL)
+        {
+            return err;
+        }
+        return parse_int(tok[3], POV_LIFT_MIN, POV_LIFT_MAX, &c->w[0]) ? NULL : "the height of a shaft floor must be an integer -512..100 (units)";
+    }
     if (strcmp(tok[0], "cube") == 0)
     {
         return parse_cube(tok, ntok, c);
@@ -1230,11 +1418,20 @@ static void apply(const command_t *c)
         {
             rise_finish(s_moving[0]);       // a reset window: the heights stand at once
         }
+        snap_open();
+        for (i = 0; i < POVC_CELLS; i++)
+        {
+            s_lift[i] = 0;                  // the shafts' floors are not known in a window set anew: the bridge sends `shaft` again
+        }
+        for (i = 0; i < POVC_CELLS; i++)
+        {
+            cover_refresh(i);               // the rim lies elsewhere in the window
+            settle(i, 1);
+        }
         for (i = 0; i < POVC_CELLS; i++)
         {
             set_look(i, s_kind_of[i]);      // the variants follow the world position
         }
-        snap_open();
         break;
     case OP_DAYTIME:
         if (POV_SkyActive())
@@ -1251,7 +1448,19 @@ static void apply(const command_t *c)
             s_dirty = 1;
         }
         break;
+    case OP_SHAFT:
+        shaft_line(c->b * POVC_GRID + c->a, c->w[0]);
+        break;
     case OP_WORLD:
+        s_world_dim = c->b;
+        for (i = 0; i < POVC_CELLS; i++)
+        {
+            cover_refresh(i);               // where the rim lies has changed: so has the back of every recess
+        }
+        for (i = 0; i < POVC_CELLS; i++)
+        {
+            set_look(i, s_look_of[i]);
+        }
         if (POV_SkyActive())
         {
             POV_SkySetWorld(c->w[0], c->w[1], c->w[2], c->w[3], c->b);
@@ -1967,6 +2176,12 @@ static void init_world(void)
     for (i = 0; i < POVC_CELLS; i++)
     {
         s_moving_at[i] = -1;
+        s_covering[i] = -1;
+        s_open[i] = -1;
+    }
+    s_ceil_flat = s_flatnum[K_WALL][0][0];
+    for (i = 0; i < POVC_CELLS; i++)
+    {
         set_kind_now(i, K_EMPTY);
     }
     rise_from_command_line();
@@ -2024,10 +2239,10 @@ static void render_frame(void)
         s_trace_frame++;
         for (c = 0; c < POVC_CELLS; c++)
         {
-            if (sectors[c].floorheight != 0 || s_look_of[c] != K_EMPTY || s_kind_of[c] != K_EMPTY)
+            if (s_floor[c] != 0 || s_look_of[c] != K_EMPTY || s_kind_of[c] != K_EMPTY)
             {
                 fprintf(stderr, "rise: frame=%lu cell=%d h=%d kind=%d look=%d\n", s_trace_frame, c,
-                        (int)sectors[c].floorheight, (int)s_kind_of[c], (int)s_look_of[c]);
+                        (int)s_floor[c], (int)s_kind_of[c], (int)s_look_of[c]);
             }
         }
     }

@@ -18,7 +18,7 @@ License: GPL-2.0 (see `LICENSE`, unchanged).
   calm of the far floor ("Themes").
 - `tests/test_headless.sh`: smoke test.
 - `tests/test_size.py`, `tools/measure_size.py`: picture size (package P5, "Picture size" below).
-- `tools/ring_art.py`, `tools/ring_samples.py`, `tests/test_ring.py`: the field's rim, a ring of cells one storey high with bunks and shaft portals ("The field's rim").
+- `tools/ring_art.py`, `tools/ring_samples.py`, `tools/measure_rim.py`, `tests/test_ring.py`: the field's rim, a ring of cells one storey high with bunks and shaft portals as recesses ("The field's rim").
 - `tests/test_rise.py`, `tools/rise_samples.py`, `tools/measure_rise.py`: cells rise out of the ground and sink into it ("Rise and sink").
 - One upstream change: `doomgeneric/i_system.c` skips the zenity error dialog when
   `POV_NO_ERROR_DIALOG` is defined (set in `Makefile.headless`). The message still goes to stderr.
@@ -148,6 +148,7 @@ corner; angles in degrees, 0 = east, counter-clockwise.
 | `clouds <seconds>` | the world time of the clouds; only a theme with a sky reacts | integer 0..10,000,000 |
 | `world <cube_x> <cube_y> <cube_z> <level> <dim>`, `cube <id> <cube_x> <cube_y> <cube_z> <dim>`, `nocube <id>` | where the field lies in the world and the neighbour cubes ("The sky") | see there |
 | `origin <x> <y>` | world coordinates of cell 0, 0 of the window (default 0 0); the look of a cell follows its world position (see "Themes"). The cell lines keep using window coordinates | x, y integers within +-1,000,000 |
+| `shaft <x> <y> <h>` | the floor of a shaft, in units; both cells of the shaft; capability `shaft` ("The field's rim") | x, y 0..47, h integer -512..100 |
 | `quit` | end | |
 
 A line that is not exactly one of these is rejected as a whole, counted, and changes nothing; the first
@@ -217,6 +218,7 @@ The file `capabilities` next to the program (built by `make -f Makefile.headless
 | `world` | `world`, `cube`, `nocube` |
 | `kinds` | the thing kinds `monster`, `bird`, `corpse` |
 | `ring` | the cell kinds `ring`, `alcove`, `shaftlo`, `shafthi`, the row characters `R`, `K`, `P`, `Q` ("The field's rim") |
+| `shaft` | `shaft <x> <y> <height>` ("The field's rim") |
 
 **A bridge sends the lines of a word only when the word is in that file** (a missing file: none of them). An older program
 rejects such a line as a whole (counted, harmless), but the picture would lack what the line means. `tests/test_kinds.py` holds
@@ -346,40 +348,59 @@ dimming with distance, flat wall textures per kind and direction, floors, a sky,
 The edge of the field is a ring of cells around it, one cell thick (indices -1 and `dim`), **one storey high (4 m = 128 units)**; built
 walls inside the field stay half high (64). The program draws what a bridge tells it, cell by cell, in the four kinds
 below; **where** a bunk or a portal sits, the bridge computes from `dim` by the rules of the concept (the concept owns the numbers:
-`konzept-wand-kojen-schacht-2026-08-02.md`, sections 2.1 to 2.5). Nothing about a field's size is known to the program.
+`konzept-wand-kojen-schacht-2026-08-02.md`, sections 2.1 to 2.5).
 
-| Kind | Row | Meaning | Height |
-|---|---|---|---|
-| `ring` | `R` | a plain stretch of the ring (and the four corners) | 128 |
-| `alcove` | `K` | a bunk (16 a wall: position `i * spacing + spacing // 2`, `spacing = dim // 16`) | 128 |
-| `shaftlo` | `P` | the first of the two cells of a shaft portal (positions 1 and 2 of a wall) | 128 |
-| `shafthi` | `Q` | the second of them | 128 |
+| Kind | Row | Meaning | Floor | Ceiling |
+|---|---|---|---|---|
+| `ring` | `R` | a plain stretch of the ring (and the four corners): a solid wall | 128 | the sky |
+| `alcove` | `K` | a bunk (16 a wall: position `i * spacing + spacing // 2`, `spacing = dim // 16`) | 0 | 70 (2.2 m) |
+| `shaftlo` | `P` | the first of the two cells of a shaft (positions 1 and 2 of a wall) | `shaft` line, default 0 | 109 (3.4 m) |
+| `shafthi` | `Q` | the second of them | as the first | 109 |
+
+**Built, not drawn.** A bunk is the whole ring cell hollowed out (4 m wide, 4 m deep, the server's own measure: its body stands in
+the middle of the cell, `marauder_home.py`): a real recess with five inner faces. The floor is the ground of the field (flat of
+the empty cell, the lightest), the ceiling a flat of its own at 70 units, the three walls are the faces of the two neighbours
+in the ring and of the cell behind it. The wall over the opening stays up to the 4 m of the rim: the engine draws the upper wall of a
+line whose back ceiling is under 128 up to 128 and no higher (`r_segs.c`, `POV_CAP`; the sky shows above it). A shaft is the same
+with a ceiling of 109 and a floor that the bridge sets: both cells open, 8 m wide, 3.4 m high; its lintel (the top 19 units of the
+face over the opening) and the walls inside it (the two neighbours in the ring and the sill under the opening) are gold, the
+back wall is the rim. The ceiling of a shaft stays where it is while the floor moves (a sector has one ceiling; so the shaft is a
+room that deepens, not one that is open above).
+
+**The back.** Nothing exists beyond the rim, so the cell behind a bunk or a shaft cell (the one on the side away from the field)
+is raised to the height of the rim and looks like it, whatever the bridge sent for it (`eff_kind` in `pov_control.c`; the bridge
+sends `empty` there, as before, and the program keeps it up while the recess stands). Which side the field lies on is derived from
+`world` (the field's `dim`) and `origin` (the world coordinate of window cell 0, 0; the bridge's world x is the field's x and its
+world y the field's y negated): the rim is the world column -1 (the field lies east) and `dim` (west), the world row 1 (south) and
+`-dim` (north). A recess that does not lie on the rim by this rule (no `world` sent: `dim` is 128 by default) has no back wall: it is
+open on both sides. The bridge sends `world` before the rows, and again when the field changes; the program redoes all backs when
+`world` or `origin` arrives.
+
+**The shaft's floor.** New line `shaft <x> <y> <height>`: x, y a cell of a shaft (either), height the floor in whole units,
+-512..100 (a storey is 128; 0 is the floor of the field). Both cells of the shaft (the neighbour of the other kind `shaftlo` /
+`shafthi`) take it and glide to it like a cell rises (the same speed: 128 units in 1.2 s, smoothstep; `-pov-rise 0` jumps). A line for a
+cell that is no shaft is remembered and has no effect until a shaft stands there. `origin` (a window set anew) forgets all floors
+(0): the bridge sends `shaft` again after the rows. A camera or a thing in a shaft rides on its floor like on any cell. Capability
+word `shaft`.
 
 `shaftlo` is the cell with the **lower world coordinate along the wall** (x along the walls at the south and north ends of the field,
-y along those at the west and east ends), `shafthi` the one next to it with the higher. The program turns the two halves of the
-portal so that the frame stands round the outside of the pair seen from the field, from any side. A shaft beats a bunk on the same
-cell (a field of 32 cells: position 1 is both). Nothing else changes for the cell: the same height travel (rise and sink), the same
-looks chosen from the world position.
+y along those at the west and east ends); the two halves are equal now (the gold is the same for both). A shaft beats a bunk on the
+same cell (a field of 32 cells: position 1 is both). The same height travel (rise and sink), the same looks chosen from the world position.
+Two cells that are both open and touch (a field of 32: the bunk at position 3 next to the shaft cell 2) are open to each other, since a
+sector has no thin wall.
 
-**Drawn, not built.** The map keeps one sector a cell. A bunk and a portal are pictures on the flat face of the ring: a hollow with
-a back panel, wide strokes from the corners of the opening to the corners of the panel (they stay in the picture far away, the
-strokes of the themes fold at their distance), the darker stage inside, the lighter one for floor and back. Measures in texels of the
-face (256 x 256 over one cell edge of 128 units: 64 texels a metre): a bunk 141 x 141 (2.2 m by 2.2 m) in the middle of its cell on
-the floor; a portal 218 rows (3.4 m) high over two cells (512 texels = 8 m), the frame 14 texels in the colour of the bands
-(gold), an arrow up in its left half and one down in its right half. The faces are made of the palette indices of the role `wall` (the
-palette has no free index for a role of its own) and the gold of the bands.
-
-- Faces: `tools/ring_art.py`, variants: ring 4, bunk 4 (a bed, a bed and a lamp, a bed behind a curtain, a shelf and a bench), portal 1
-  (so that the two cells of a portal always fit). Slots and choice by the hash of the world position of the cell as for every kind.
-- Theme lump `POVRING` (optional, 1032 bytes): `POVE`, version 1, 3 reserved bytes, then for ring, alcove, the left and the right half of a portal
-  16 slots of two wall texture names (east/west, north/south); the top faces are the wall's. **A theme without the lump draws the ring like
-  a wall, one storey high**, and so does a run without a theme (the table `s_kind` names the wall's texture). An older program ignores the lump.
+- Faces: `tools/ring_art.py`, variants: ring 4, bunk 4 (the same faces as the ring: the lintel and the inside), shaft 1 (gold all over).
+  Slots and choice by the hash of the world position of the cell as for every kind.
+- Theme lump `POVRING` (optional, 1032 bytes, unchanged): `POVE`, version 1, 3 reserved bytes, then for ring, alcove, the left and the right half of a
+  portal (the gold) 16 slots of two wall texture names (east/west, north/south). **A theme without the lump draws the ring like
+  a wall, one storey high**, and a bunk and a shaft without the gold, with the wall's faces. An older program ignores the lump.
 - Without the capability: a program without the word `ring` in `capabilities` rejects the four kind names and the four row characters as a
-  whole (counted, harmless); a bridge sends them only when the word is there and draws its own ring from the cell kinds it has otherwise.
-- The ring's tops are the wall's tops (seen only from a block, eye above 128).
+  whole (counted, harmless); a program without `shaft` rejects the `shaft` line.
+- The ring's tops are the wall's tops (seen only from a block, eye above 128); from above, a recess is a hole in the top (no top face over it).
 - The window's own border (the smooth wall at the edge of the 48 x 48 window, the colour `border`) is not part of this: it stays.
-- Samples: `python3 tools/ring_samples.py [--size 672x324] [--dim 32]` writes `out/muster-rand/rand-<A|B|C>-<wand-frontal|wand-schraeg|portal|ecke>-<size>.png`
-  (a field of `dim` cells, the ring placed by the rules above, a few cells inside).
+- Samples: `python3 tools/ring_samples.py [--size 672x324] [--dim 32]` writes `out/muster-rand/rand-<A|B|C>-<koje-frontal|wand-schraeg|aus-der-koje|schacht-schraeg|schacht-innen|ecke|schacht-tief>-<size>.png`
+  (what the bridge sends for a field of `dim`: `world`, `origin`, the rows, a few cells inside, the shaft floor at half height in `schacht-innen`).
+- Measure: `python3 tools/measure_rim.py [--bin ...]`.
 - Tests: `python3 -m unittest tests.test_ring tests.test_kinds`.
 
 ## The sky (package P7)

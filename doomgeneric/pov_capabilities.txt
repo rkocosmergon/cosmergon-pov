@@ -5,3 +5,4 @@ clouds
 world
 kinds
 ring
+shaft

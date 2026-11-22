@@ -36,7 +36,7 @@ SCALE = 320 / 384
 # sprite's light does, the ground and the sky are not for a figure)
 ALLOWED = {art.I_OUTLINE} | {art.I_ROLE[r][k] for r in art.ROLES for k in ("t0", "t1", "y0", "y1")}
 EXPECTED_NAMES = sorted(["TROOA%d" % n for n in range(1, 9)] + ["BOSSA%d" % n for n in range(1, 9)]
-                        + ["HEADA%d" % n for n in range(1, 9)] + ["POL5A0", "BPAKA0"])
+                        + ["HEAD%s%d" % (letter, n) for letter in "ABCD" for n in range(1, 9)] + ["POL5A0", "BPAKA0"])
 
 
 def setUpModule():
@@ -61,6 +61,12 @@ def frame_of(lines, theme=None):
 
 def thing(kind, angle=180, ident=1, pos=POS):
     return "thing %d %s %s %s\n" % (ident, kind, pos, angle)
+
+
+# A bird's look follows the clock (one step a picture, "Flying and perching"): the bird with id 1, first seen, shows the half
+# spread wings (the look of the template of the direction) in the picture of step 2 and floats 40 + up to 6 units high.
+GLIDE_AT = "next 2\n"
+SWING = 6 * SCALE
 
 
 def box(frame, base):
@@ -178,6 +184,52 @@ class Templates(unittest.TestCase):
             self.assertEqual(len(set(seen.values())), 8, kind + ": eight different looks")
 
 
+class Strips(unittest.TestCase):
+    """The bird has four looks a direction in one file ("Own figures"): glide, wings up, wings down, perched."""
+
+    def looks(self, direction):
+        return figures.read_frames(os.path.join(figures.FIGURES_DIR, figures.template_name("bird", direction)))
+
+    def test_a_strip_gives_back_what_was_written(self):
+        palette = make_theme.build_palette(dict(make_theme.THEMES["wueste"]))
+        looks = [([[1, None, 3], [4, 5, 6]], 1, 4), ([[7, 8], [9, None], [None, 2]], 0, 5), ([[3]], 0, 1)]
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "strip.png")
+            figures.write_strip(path, looks, palette)
+            self.assertEqual(figures.read_frames(path), looks)
+            self.assertEqual(figures.read_template(path), looks[0], "an old reader gets the first look")
+            self.assertEqual(figures.read_template(path, 2), looks[2])
+            figures.write_template(os.path.join(d, "one.png"), *looks[0], palette)
+            self.assertEqual(figures.read_frames(os.path.join(d, "one.png")), [looks[0]], "a file of one look is a list of one")
+
+    def test_the_bird_has_four_different_looks_in_every_direction(self):
+        for direction in range(8):
+            looks = self.looks(direction)
+            self.assertEqual(len(looks), figures.FRAMES["bird"], direction)
+            self.assertEqual(len({(tuple(map(tuple, g)), left, top) for g, left, top in looks}), 4, direction)
+            for grid, left, top in looks:
+                used = {v for line in grid for v in line if v is not None}
+                self.assertLessEqual(used, ALLOWED, direction)
+                self.assertTrue(all(any(v is not None for v in line) for line in grid), "cut to its box")
+                self.assertLessEqual(len(grid) - top, 1, "the lowest point is at the origin: the perched one stands on it")
+                self.assertLess(40 + 6 + top, 128, "in flight, the swing included, under the top of a cell")
+
+    def test_the_perched_look_is_small_and_the_wings_up_look_is_the_tallest(self):
+        for direction in (0, 4):                      # from the front and from the back
+            glide, up, down, perched = self.looks(direction)
+            self.assertLess(len(perched[0][0]), len(glide[0][0]) // 2, "wings folded: narrower than spread")
+            self.assertGreater(len(up[0]), len(glide[0]) + 8, "wings up")
+            self.assertLessEqual(len(down[0]), len(glide[0]) + 1, "wings down: not under the origin, the picture would sink into the floor")
+
+    def test_the_lumps_carry_all_four_looks_of_every_rotation(self):
+        lumps = dict(make_theme.build_theme("wueste"))
+        for look, letter in enumerate("ABCD"):
+            for n in range(1, 9):
+                direction = (-(n - 1)) % 8
+                grid, left, top = self.looks(direction)[look]
+                self.assertEqual(lumps["HEAD%s%d" % (letter, n)], figures.patch_lump(grid, left, top), (letter, n))
+
+
 class Lumps(unittest.TestCase):
     def test_each_theme_brings_the_sprites_inside_its_own_range(self):
         for theme in THEMES:
@@ -253,8 +305,9 @@ class Making(unittest.TestCase):
         with tempfile.TemporaryDirectory() as pictures:
             for kind, (pattern, _table) in make_figures.KINDS.items():
                 os.makedirs(os.path.join(pictures, kind))
-                for direction in range(8):
-                    synthetic_render(os.path.join(pictures, kind, pattern % direction if "%d" in pattern else pattern), shift)
+                for one in pattern if isinstance(pattern, tuple) else (pattern,):
+                    for direction in range(8):
+                        synthetic_render(os.path.join(pictures, kind, one % direction if "%d" in one else one), shift)
             return make_figures.make_templates(pictures, out)
 
     def test_the_templates_are_made_the_same_every_time_and_follow_the_picture(self):
@@ -279,13 +332,13 @@ class Engine(unittest.TestCase):
     def test_the_table_of_the_program_names_the_sprites_of_the_templates(self):
         text = tc.read_text(SOURCE)
         body = re.search(r"s_thing_kind\[\] = \{(.*?)\n\};", text, re.S).group(1)
-        rows = {n: (s, int(f)) for n, s, f, _l in re.findall(r'\{ "(\w+)",\s+SPR_(\w+),\s+(\d+),\s+(\d+) \}', body)}
+        rows = {n: (s, int(f)) for n, s, f, _l in re.findall(r'\{ "(\w+)",\s+SPR_(\w+),\s+(\d+),\s+(\d+),\s+MOTION_\w+ \}', body)}
         for kind, (sprite, frame, _rot) in figures.KINDS.items():
             self.assertEqual(rows[kind], (sprite, ord(frame) - ord("A")), kind)
 
     def boxes(self, theme):
         base = frame_of("next\n", theme)
-        return {k: box(frame_of(thing(k) + "next\n", theme), base) for k in figures.KINDS}
+        return {k: box(frame_of(thing(k) + (GLIDE_AT if k == "bird" else "next\n"), theme), base) for k in figures.KINDS}
 
     def test_the_figures_stand_where_they_should_and_have_their_size(self):
         for theme in THEMES:
@@ -304,7 +357,7 @@ class Engine(unittest.TestCase):
         for theme in THEMES:
             b = self.boxes(theme)
             gap = b["marauder"][3] - b["bird"][3]
-            self.assertAlmostEqual(gap, 40 * SCALE, delta=4, msg=theme)         # the lift of 40 units, its lowest point at the origin
+            self.assertAlmostEqual(gap, 40 * SCALE, delta=4 + SWING, msg=theme)  # the lift of 40 units (+- the swing), its lowest point at the origin
             self.assertAlmostEqual(b["bird"][3] - b["bird"][1] + 1, 41 * SCALE, delta=6, msg=theme)      # the own bird, 41 points high
             base = frame_of("next\n", theme)
             high = frame_of(thing("bird") + "cell 24 24 cell\nnext\n", theme)
@@ -316,7 +369,7 @@ class Engine(unittest.TestCase):
         for theme in ("wueste",):
             for kind in ("marauder", "monster", "bird"):
                 base = frame_of("next\n", theme)
-                frames = [frame_of(thing(kind, a) + "next\n", theme) for a in range(0, 360, 45)]
+                frames = [frame_of(thing(kind, a) + (GLIDE_AT if kind == "bird" else "next\n"), theme) for a in range(0, 360, 45)]
                 self.assertEqual(len(set(frames)), 8, (theme, kind))
                 for angle, frame in zip(range(0, 360, 45), frames):
                     got = box(frame, base)

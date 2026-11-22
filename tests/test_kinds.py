@@ -81,7 +81,7 @@ def box(frame, base):
 def table():
     """Rows of s_thing_kind in the source: (name, sprite, frame, lift)."""
     body = re.search(r"s_thing_kind\[\] = \{(.*?)\n\};", tc.read_text(SOURCE), re.S).group(1)
-    return [(n, s, int(f), int(l)) for n, s, f, l in re.findall(r'\{ "(\w+)",\s+SPR_(\w+),\s+(\d+),\s+(\d+) \}', body)]
+    return [(n, s, int(f), int(l)) for n, s, f, l, _m in re.findall(r'\{ "(\w+)",\s+SPR_(\w+),\s+(\d+),\s+(\d+),\s+(MOTION_\w+) \}', body)]
 
 
 def iwad_lumps():
@@ -188,6 +188,8 @@ class Looks(unittest.TestCase):
         self.assertEqual(res.summary, (10, 0), res.err)
         want = [frame_of(thing(k, a) + "next\n") for k, a in (("monster", 180), ("corpse", 0), ("bird", 180),
                                                               ("marauder", 180), ("monster", 180))]
+        # a flier's look follows the clock (one step a picture): the bird is drawn in the third picture here
+        want[2] = frame_of("next\nnext\n" + thing("bird") + "next\n")
         self.assertEqual(res.frames, want)
 
     def test_a_dead_one_stays_where_it_fell(self):
@@ -225,7 +227,8 @@ class Height(unittest.TestCase):
             self.assertEqual(res.rc, 0, res.err)
             moving = res.frames[5:38]
             self.assertTrue(all(x != y for x, y in zip(moving, moving[1:])), kind)
-            want = frame_of("cell 22 20 tower\n" + thing(kind, 0, pos="22.5 20.5") + "cam 22.5 16 90\nnext\n")
+            # at the end the bird has long stood still: it perches on the top of the tower, which does not depend on the clock
+            want = frame_of("cell 22 20 tower\n" + thing(kind, 0, pos="22.5 20.5") + "cam 22.5 16 90\nnext 100\n")
             self.assertEqual(res.frames[-1], want, kind)
 
 

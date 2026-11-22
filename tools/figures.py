@@ -35,7 +35,14 @@ KINDS = {
     "loot": ("BPAK", "A", 0),
 }
 
+# kind -> number of looks (frames A, B, ...) per rotation where it is more than one. The bird has four: A glide (wings
+# half spread), B wings up, C wings down, D perched (wings folded, on the ground). The program chooses by time and by
+# whether the thing moves (COSMERGON.md, "Own figures"). A kind of several looks is ONE file per direction: the looks side by
+# side in a strip, the table in the private chunk `cFRM`.
+FRAMES = {"bird": 4}
+
 PRIVATE_ORIGIN = b"cORg"
+PRIVATE_FRAMES = b"cFRM"
 
 
 def template_name(kind: str, direction: int) -> str:
@@ -140,14 +147,55 @@ def write_template(path: str, grid, left_offset: int, top_offset: int, palette) 
         handle.write(png)
 
 
-def read_template(path: str):
-    """A template file as (grid of palette indices or None, left offset, top offset)."""
+def write_strip(path: str, frames, palette) -> None:
+    """Several looks of one direction as one template: `frames` is a list of (grid, left offset, top offset), each cut to its
+    box. They stand side by side, the origin rows on one line; the private chunk `cFRM` holds per look its first column, width,
+    height, left and top offset."""
+    origin_row = max(top for _g, _l, top in frames)
+    height = max(origin_row - top + len(grid) for grid, _l, top in frames)
+    width = sum(len(grid[0]) for grid, _l, _t in frames)
+    strip = [[None] * width for _ in range(height)]
+    table, x = [], 0
+    for grid, left, top in frames:
+        first = origin_row - top
+        for y, line in enumerate(grid):
+            strip[first + y][x:x + len(line)] = line
+        table.append((x, len(grid[0]), len(grid), left, top))
+        x += len(grid[0])
+    plte_top = max((v for line in strip for v in line if v is not None), default=0) + 2
+    plte = b"".join(bytes(palette[v - 1]) if v else b"\0\0\0" for v in range(plte_top))
+    raw = b"".join(b"\0" + bytes(0 if v is None else v + 1 for v in line) for line in strip)
+    frames_chunk = struct.pack(">H", len(table)) + b"".join(struct.pack(">HHHhh", *row) for row in table)
+    png = (b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 3, 0, 0, 0))
+           + _chunk(b"PLTE", plte) + _chunk(b"tRNS", b"\0")
+           + _chunk(PRIVATE_ORIGIN, struct.pack(">hh", frames[0][1], origin_row)) + _chunk(PRIVATE_FRAMES, frames_chunk)
+           + _chunk(b"IDAT", zlib.compress(raw, 9)) + _chunk(b"IEND", b""))
+    with open(path, "wb") as handle:
+        handle.write(png)
+
+
+def read_frames(path: str):
+    """All looks of a template file as a list of (grid, left offset, top offset); a file of one look gives a list of one."""
     width, height, ctype, rows, chunks = _decode(path)
     if ctype != 3 or PRIVATE_ORIGIN not in chunks:
         raise ValueError("%s: not a figure template" % path)
     grid = [[None if v == 0 else v - 1 for v in line] for line in rows]
     left, top = struct.unpack(">hh", chunks[PRIVATE_ORIGIN])
-    return grid, left, top
+    if PRIVATE_FRAMES not in chunks:
+        return [(grid, left, top)]
+    body = chunks[PRIVATE_FRAMES]
+    (count,) = struct.unpack(">H", body[:2])
+    out = []
+    for i in range(count):
+        x, w, h, fl, ft = struct.unpack(">HHHhh", body[2 + 10 * i:12 + 10 * i])
+        first = top - ft
+        out.append(([line[x:x + w] for line in grid[first:first + h]], fl, ft))
+    return out
+
+
+def read_template(path: str, frame: int = 0):
+    """A template file as (grid of palette indices or None, left offset, top offset); `frame`: which look of a strip."""
+    return read_frames(path)[frame]
 
 
 def patch_lump(grid, left_offset: int, top_offset: int) -> bytes:
@@ -179,8 +227,9 @@ def sprite_lumps(directory: str | None = None) -> list[tuple[str, bytes]]:
     directory = directory or FIGURES_DIR
     lumps: list[tuple[str, bytes]] = []
     for kind, (sprite, frame, rotations) in KINDS.items():
-        for n in range(1, 9) if rotations else (0,):
-            direction = (-(n - 1)) % 8 if rotations else 0
-            grid, left, top = read_template(os.path.join(directory, template_name(kind, direction)))
-            lumps.append(("%s%s%d" % (sprite, frame, n), patch_lump(grid, left, top)))
+        for look in range(FRAMES.get(kind, 1)):
+            for n in range(1, 9) if rotations else (0,):
+                direction = (-(n - 1)) % 8 if rotations else 0
+                grid, left, top = read_template(os.path.join(directory, template_name(kind, direction)), look)
+                lumps.append(("%s%s%d" % (sprite, chr(ord(frame) + look), n), patch_lump(grid, left, top)))
     return [("S_START", b"")] + lumps + [("S_END", b"")]

@@ -21,6 +21,7 @@ License: GPL-2.0 (see `LICENSE`, unchanged).
 - `tools/ring_art.py`, `tools/ring_samples.py`, `tools/measure_rim.py`, `tests/test_ring.py`: the field's rim, a ring of cells one storey high with bunks and shaft portals as recesses ("The field's rim").
 - `tests/test_rise.py`, `tools/rise_samples.py`, `tools/measure_rise.py`: cells rise out of the ground and sink into it ("Rise and sink").
 - `assets/figures/`, `tools/figures.py`, `tools/make_figures.py`, `tests/test_figures.py`: the game's own figures as sprites of the themes ("Own figures").
+- `tests/test_flight.py`, `tools/bird_samples.py`, `tools/measure_flight.py`: the bird beats its wings and swings while it moves and perches when it stands ("Flying and perching").
 - One upstream change: `doomgeneric/i_system.c` skips the zenity error dialog when
   `POV_NO_ERROR_DIALOG` is defined (set in `Makefile.headless`). The message still goes to stderr.
 
@@ -198,11 +199,11 @@ without one they are Freedoom's and stand in (table `s_thing_kind`: name, sprite
 | `marauder` | `TROO` A (8 rotations, shows the facing) | radius 0.6 m | on the floor |
 | `loot` | `BPAK` A | | on the floor |
 | `monster` | `BOSS` A (8 rotations) | radius 0.9 m, the largest | on the floor |
-| `bird` | `HEAD` A (8 rotations) | radius 0.8 m | floats: origin 40 units over the floor, lowest point 35 and top 101 units over it (under the 128 of a cell) |
+| `bird` | `HEAD` A..D (8 rotations; A only without a theme) | radius 0.8 m | flies while its position changes: origin 40 units over the floor, swinging by 6 units, wings beating; perches on the floor when it stands ("Flying and perching") |
 | `corpse` | `POL5` A (a pool of blood without a theme; a fallen marauder with one), one look | lies | on the floor, does not turn: the angle (always 0 from the bridge) changes nothing |
 
 Every thing's z follows the floor of its cell in every drawn frame (`commit()`), a floating one adds its lift, so a bird over
-a rising or sinking cell rises and sinks with it. An unknown kind is rejected as before; ids 0..255 and the limit of things
+a rising or sinking cell rises and sinks with it (a bird that stands is on that floor, see "Flying and perching"). An unknown kind is rejected as before; ids 0..255 and the limit of things
 are unchanged.
 
 ## Capabilities
@@ -415,18 +416,23 @@ needs neither Blender nor any picture outside this repository. Without a theme t
   the metre, 8 directions. `tools/make_figures.py <picture-dir>` reduces the renders by 5 to **32 points to the metre**
   (one point = one unit of the engine; a wall's 128 units are a cell of 4 m), puts every point on a role of the theme layout
   and writes the templates. The renders are not part of the repository, the templates are.
-- **Templates.** `assets/figures/<kind>-<direction>.png`: 26 small files (largest 1.1 kB, 16.3 kB together), 8 bit paletted
+- **Templates.** `assets/figures/<kind>-<direction>.png`: 26 small files (largest 1.6 kB, 24.0 kB together), 8 bit paletted
   PNG cut to the figure's box. A template holds the palette INDICES of the theme layout (`theme_art.py`), not colours, so it is
   the same file for every theme; the PNG's own palette only shows it in the colours of `wueste`. Value 0 is transparent, value
   v + 1 is the index v. The private chunk `cORg` holds the origin (left and top offset of the Doom picture). Direction 0: the
   figure faces the viewer; 1 turns towards the viewer's right, and so on counter-clockwise seen from above. Engine rotation n
   (1..8) is direction -(n - 1) mod 8. A figure uses only the navy and the keys `t0`, `t1`, `y0`, `y1` of the roles (the x
-  keys of a role are hazed earlier than a sprite's light is).
-- **Sprites.** `TROOA1`..`A8` (marauder), `BOSSA1`..`A8` (monster), `HEADA1`..`A8` (bird), `POL5A0` (corpse), `BPAKA0` (loot);
-  26 lumps, 90.7 kB. A theme PWAD grows from 8,286,919 to 8,378,052 bytes (+91,133). Two builds are the same bytes.
+  keys of a role are hazed earlier than a sprite's light is). **A kind with several looks** (the bird has four: `FRAMES` in
+  `tools/figures.py`) is still one file a direction: the looks stand side by side in one strip, their origin rows on one line, and
+  the private chunk `cFRM` holds for each look its first column, width, height, left and top offset (`figures.read_frames`,
+  `write_strip`; `read_template` gives the first look). The strip of a direction keeps the name `bird-<direction>.png`.
+- **Sprites.** `TROOA1`..`A8` (marauder), `BOSSA1`..`A8` (monster), `HEADA1`..`D8` (bird: A glide, B wings up, C wings down, D
+  perched), `POL5A0` (corpse), `BPAKA0` (loot); 50 lumps, 137.6 kB. A theme PWAD grows from 8,286,919 to 8,425,336 bytes (+138,417;
+  before the bird's looks: 8,378,052). Two builds are the same bytes.
 - **Sizes** (measured on the renders, outline included; origin at the feet): monster 3.66 m (about 3.7 m) high, 2.55 m wide from the front
-  (2.9 m at an angle), 2.75 m deep: 117 x 82 points; marauder 64 points (2.0 m); bird 3.04 m of wing span, 1.27 m high, 98 x 40 points,
-  its origin at its lowest point, so with the lift of 40 units (`s_thing_kind`) it floats from 40 to 81 units over the floor;
+  (2.9 m at an angle), 2.75 m deep: 117 x 82 points; marauder 64 points (2.0 m); bird 3.04 m of wing span, 1.27 m high, 98 x 40 points
+  (glide; wings up 58 points high, wings down 40, perched 42 high and 35 to 69 wide), its origin at its lowest point, so with the
+  lift of 40 units (`s_thing_kind`) it floats from 40 to 81 units over the floor (to 98 with the wings up, plus the swing of 6);
   corpse 61 x 13 points; loot 24 x 19.
 - **Tones.** The monster is the dark one: its body is the navy of the lines (40 percent of its points; the marauder 16),
   limbs and armour the tower's `y1` and `y0`; its mouth is navy with teeth and its eyes in the tone of `own` (yellow or
@@ -435,19 +441,68 @@ needs neither Blender nor any picture outside this repository. Without a theme t
   `wueste`): the navy is not hazed at any distance, `y1` not up to 80 m, the tops `t*` and the `own` tone from about 24 m (one
   step to the horizon colour). A far monster is therefore a dark body with a hazed rim.
 - **Make anew.** Render the models (picture folders `marauder`, `monster`, `bird`, `corpse`, `loot` with `idle_dir0..7.png`,
-  `glide_dir0..7.png` for the bird, `idle_dir0.png` for the corpse and the loot), then
+  `glide_dir0..7.png`, `flap_a_dir0..7.png`, `flap_b_dir0..7.png` and `sit_dir0..7.png` for the bird, `idle_dir0.png` for the corpse and
+  the loot), then
   `python3 tools/make_figures.py <picture-dir>` and commit the templates. The colour tables of the render colours are at the
   top of `tools/make_figures.py`.
 - **Licence.** The figure pictures (the models, the renders and the templates in `assets/figures/`) are own work of the
   project and under the licence of this repository, GPL-2.0-or-later, like the pictures `tools/theme_art.py` draws.
   No third-party picture is used.
-- **Not done.** No animation: a figure is one picture per direction. Walking or a wing beat needs several pictures per
-  direction (frames B, C, ... of the same sprite) and a command that names the frame: the `thing` line carries a kind and an angle
-  only, so the program would need either a frame number in the line (a new capability word) or a step of its own that cycles
-  the frames while a thing moves between two lines. The table `s_thing_kind` holds one frame per kind.
+- **Not done.** The marauder and the monster do not walk: one picture per direction ("Flying and perching" says what walking needs).
 - **Cost.** 20 figures in view, 672 x 324, 400 pictures, 3 runs: 4.98 ms before (theme with the IWAD's sprites) and 4.19 ms after
   per picture; 0.94 ms without a theme.
-- Tests: `python3 -m unittest tests.test_figures`.
+- Tests: `python3 -m unittest tests.test_figures tests.test_flight`.
+
+### Flying and perching
+
+A bird that flies beats its wings and swings up and down; a bird that stands sits on the floor. The program decides this alone,
+from what it gets (`thing <id> bird <x> <y> <angle>`) and from its clock; the bridge sends nothing new, there is no new
+capability word.
+
+- **Flying or standing.** A thing is *moving* in the step a `thing` line changes its x or y. A bird whose position did not change for
+  `POV_FLY_HOLD_STEPS` = 28 steps (0.8 s) is *standing*. The bridge steps 5 to 8 times a second ("The window"), a moving thing
+  changes in every line, so 0.8 s are four lines of the slowest writer: a short gap in the lines does not make a bird land, a bird
+  that hovers on one spot does not hover for long. A line that only turns it (same x and y), or repeats the position, does not
+  count as moving. The clock is the engine step of "Rise and sink": 35 a second live, one step a drawn picture in blocking mode.
+- **Landing and take-off.** The air under the bird goes from 0 (on the floor) to `POV_AIR_STEPS` = 28 (flight) at one step a step,
+  up while it moves and down while it stands, and its height is eased with the smoothstep of a cell's travel: landing and take-off
+  take 0.8 s, they glide, a bird that stops and moves again turns round half way. The floor is the one of the sector under the
+  bird (`commit()`), so a bird over a wall or a tower perches on its top, and one over a cell that rises or sinks goes with it.
+- **In the air.** Height over the floor: the lift of the table (40 units) plus a swing of 6 units (19 cm) with a period of
+  `POV_BOB_STEPS` = 49 steps (1.4 s). The wings beat with `POV_BEAT_STEPS` = 10 steps, 3.5 beats a second, in the order glide, wings up,
+  glide, wings down: looks `A A B B B A A C C C` of the steps of one beat. The swing is sampled where the look changes, so a
+  flier needs a new picture only at those steps (measured live: 10 pictures in the first 0.5 s of a bird's flight, none for a perched bird).
+  Every bird has its own offset (its id) in beat and swing, a flock does not beat in step. A bird first seen counts as
+  moving (it came into the window flying); standing birds start flying after a `thing` line with a new position only.
+- **Perched.** Look D, the wings folded, the feet and the loot on the floor of its sector (the lowest point of the sprite is its origin
+  like in flight, so it is on the floor, not 40 units over it). It keeps the direction of its last line. A perched bird costs nothing
+  live: no picture is drawn for it.
+- **Without a theme** the placeholder sprite has one look: the bird still swings by 6 units and sinks to the floor when it stands;
+  nothing else changes. A theme made before the looks existed (a sprite with the frame A only) is drawn the same way. Only
+  `HEAD` with at least four frames in a theme switches the looks on.
+- **Determinism.** The look and the height are a function of the clock, of the ids and of the lines (position at the clock of the
+  line); the same lines and the same number of pictures give the same pictures, byte for byte (`tests/test_flight.py`).
+- **Table.** `s_thing_kind` has a motion per kind (`MOTION_NONE`, `MOTION_FLIER`). The state of a thing is `pov_thing_t` (last
+  position, clock of the last move, air, ids); `thing_look` gives the frame and the height for a clock, `thing_air` the air.
+- **Samples and cost.** `python3 tools/bird_samples.py` writes `out/samples-bird/` (`flight`: wings up, half spread, wings down from the
+  front, side and rear; `perched`: on the floor and on a wall; `landing`: ten pictures from flight to perching) for the themes and
+  without. Cost, `python3 tools/measure_flight.py [--old-bin ...]` (20 birds, 672 x 324, 400 pictures, 3 runs, `work_ms`): see the
+  table below. The program takes the clock and the table lookups only; nothing is allocated.
+
+| Scene (20 birds) | Before | Now |
+|---|---|---|
+| standing (they perch after 1.6 s) | 4.47 | 4.41 |
+| flying (every bird moves in every picture) | 4.35 | 4.36 |
+| no bird | 4.25 | 4.07 |
+
+- **Walking later.** The marauder and the monster could walk with the same means: more looks in the strip of the kind (a step
+  left, a step right, `FRAMES` in `tools/figures.py` and the strip writer need no change), a `MOTION_WALKER` in the table whose look
+  is chosen from the distance moved (the state has the last position; a step per unit of path, not per second, so a walker that
+  moves slowly steps slowly) and which stands in the idle look (A) after the same hold, and a height of 0. What is missing is the
+  art: two or three poses of each in eight directions, rendered like the bird's (`render_sheet.py` poses), and the colour tables
+  of `tools/make_figures.py` which already cover the figure. What a new line from the bridge could do better: a `thing` line has
+  the position of the moment, so a bird that glides slowly and a bird that is waiting for the next report look alike; a flag
+  or the speed in the line would end the 0.8 s guess (and let a hovering bird, if there ever is one, hover).
 
 ## The sky (package P7)
 

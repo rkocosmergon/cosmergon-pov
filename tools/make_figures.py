@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """The figure templates (`assets/figures/`) from rendered pictures. Standard library only, deterministic.
 
-    python3 tools/make_figures.py <picture-dir> [-o assets/figures]
+    python3 tools/make_figures.py <picture-dir> [-o assets/figures] [--kind bird]
 
 Only needed to change the figures; `tools/make_theme.py` builds a theme from the templates alone.
 
@@ -57,11 +57,12 @@ MONSTER = {(44, 33, 65): "navy", (22, 16, 33): "navy", (77, 60, 100): ("tower", 
 BIRD = {(41, 39, 59): ("tower", "y1"), (77, 69, 104): ("tower", "y0"), (124, 115, 144): ("tower", "t0"),
         (183, 162, 61): ("own", "t0"), (174, 137, 47): ("wall", "t0"), (93, 87, 86): ("tower", "y0"),
         (255, 237, 160): ("own", "t0")}
-# kind -> (picture name pattern, table); directions 0..7 where the pattern has %d
+# kind -> (picture name pattern, table); directions 0..7 where the pattern has %d. A tuple of patterns: one look each, in the
+# order of the frames (the bird: glide, wings up, wings down, perched), written as one strip per direction
 KINDS = {
     "marauder": ("idle_dir%d.png", DARK),
     "monster": ("idle_dir%d.png", MONSTER),
-    "bird": ("glide_dir%d.png", BIRD),
+    "bird": (("glide_dir%d.png", "flap_a_dir%d.png", "flap_b_dir%d.png", "sit_dir%d.png"), BIRD),
     "corpse": ("idle_dir0.png", DARK),
     "loot": ("idle_dir0.png", LOOT),
 }
@@ -154,19 +155,28 @@ def crop(grid, origin_col: int, foot_row: int):
     return [line[left:right + 1] for line in grid[top:bottom + 1]], origin_col - left, foot_row - top
 
 
-def make_templates(picture_dir: str, out_dir: str) -> list[str]:
+def make_templates(picture_dir: str, out_dir: str, only=None) -> list[str]:
     palette = make_theme.build_palette(dict(make_theme.THEMES["wueste"]))
     os.makedirs(out_dir, exist_ok=True)
     written = []
     for kind, (pattern, table) in KINDS.items():
+        if only and kind not in only:
+            continue
         rotations = figures.KINDS[kind][2]
+        patterns = pattern if isinstance(pattern, tuple) else (pattern,)
+        assert len(patterns) == figures.FRAMES.get(kind, 1), kind
         for direction in range(8) if rotations else (0,):
-            width, height, rgba = figures.read_png(os.path.join(picture_dir, kind, pattern % direction if rotations else pattern))
-            grid, origin, foot = reduce_picture(width, height, rgba, table)
-            thin_edge(grid)
-            cropped, left, top = crop(grid, origin, foot)
+            looks = []
+            for one in patterns:
+                width, height, rgba = figures.read_png(os.path.join(picture_dir, kind, one % direction if rotations else one))
+                grid, origin, foot = reduce_picture(width, height, rgba, table)
+                thin_edge(grid)
+                looks.append(crop(grid, origin, foot))
             path = os.path.join(out_dir, figures.template_name(kind, direction))
-            figures.write_template(path, cropped, left, top, palette)
+            if len(looks) == 1:
+                figures.write_template(path, *looks[0], palette)
+            else:
+                figures.write_strip(path, looks, palette)
             written.append(path)
     return written
 
@@ -175,8 +185,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("pictures")
     ap.add_argument("-o", "--output", default=figures.FIGURES_DIR)
+    ap.add_argument("--kind", action="append", choices=sorted(KINDS), help="only this kind (repeatable); default all")
     args = ap.parse_args()
-    written = make_templates(args.pictures, args.output)
+    written = make_templates(args.pictures, args.output, args.kind)
     print("wrote %d templates to %s" % (len(written), args.output))
     return 0
 

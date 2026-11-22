@@ -109,24 +109,29 @@ static const struct
 //                     its lowest point (the loot it carries), so 40 clear of the ground and 95 at the top
 //   corpse    POL5 A  a pool of blood: lies on the floor, one look from every side (the own figure is a fallen marauder)
 //   loot      BPAK A  a backpack
+// The last column is the motion (COSMERGON.md, "Own figures", "Flying and perching"): a flier is in the air while its
+// position changes and perches on the floor when it stands; its table lift is the height of its flight.
+typedef enum { MOTION_NONE, MOTION_FLIER } motion_t;
 static const struct
 {
     const char *name;
     spritenum_t sprite;
     int         frame;
     int         lift;
+    motion_t    motion;
 } s_thing_kind[] = {
-    { "marauder", SPR_TROO, 0,  0 },
-    { "loot",     SPR_BPAK, 0,  0 },
-    { "monster",  SPR_BOSS, 0,  0 },
-    { "bird",     SPR_HEAD, 0, 40 },
-    { "corpse",   SPR_POL5, 0,  0 },
+    { "marauder", SPR_TROO, 0,  0, MOTION_NONE },
+    { "loot",     SPR_BPAK, 0,  0, MOTION_NONE },
+    { "monster",  SPR_BOSS, 0,  0, MOTION_NONE },
+    { "bird",     SPR_HEAD, 0, 40, MOTION_FLIER },
+    { "corpse",   SPR_POL5, 0,  0, MOTION_NONE },
 };
 #define THING_KINDS ((int)(sizeof(s_thing_kind) / sizeof(s_thing_kind[0])))
 
 // ---------------------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------------------
+static int s_theme_on = 0;               // theme_init: the pictures are the theme's
 static int s_live = 0;
 static int s_ready = 0;
 static int s_done = 0;
@@ -187,12 +192,29 @@ static int s_origin_x = 0;               // world coordinates of cell 0, 0 of th
 static int s_origin_y = 0;
 static short s_facing[POVC_CELLS][4];    // side index of the cell's sidedef facing east/west/north/south
 
+// A flier's looks (frames of its sprite, a theme with own figures brings all four; otherwise frame 0 stays).
+enum { LOOK_GLIDE = 0, LOOK_UP = 1, LOOK_DOWN = 2, LOOK_PERCHED = 3, LOOKS = 4 };
+// Timing in engine steps (35 a second, the clock of "Rise and sink"; blocking mode: one step a frame).
+#define POV_FLY_HOLD_STEPS 28           // a flier perches when its position did not change for this long: 0.8 s, four
+                                        // lines of the slowest writer (5 a second; a moving thing changes every line)
+#define POV_AIR_STEPS      28           // landing and take-off take this long (0.8 s), eased like a cell's travel
+#define POV_BEAT_STEPS     10           // one wing beat: 10 steps = 3.5 beats a second
+#define POV_BOB_STEPS      49           // one swing up and down: 1.4 s
+#define POV_BOB_UNITS      6            // its height: +-6 units (19 cm)
+
 typedef struct
 {
-    int    used;
-    int    linked;
-    int    kind;                        // index in s_thing_kind
-    mobj_t mo;
+    int           used;
+    int           linked;
+    int           kind;                 // index in s_thing_kind
+    unsigned      seed;                 // the id: keeps a flock from beating in step
+    fixed_t       moved_x, moved_y;     // where the last line left it
+    unsigned long moved_step;           // the clock when its position last changed
+    int           air;                  // 0 perched .. POV_AIR_STEPS in flight, as it was at air_step
+    unsigned long air_step;
+    int           shown_look;           // what the last drawn frame showed (live mode: is a new frame due?)
+    int           shown_lift;
+    mobj_t        mo;
 } pov_thing_t;
 
 static pov_thing_t s_things[POVC_MAX_THINGS];
@@ -843,10 +865,88 @@ static void thing_unlink(pov_thing_t *t)
     }
 }
 
+// The air of a flier at `step`: it rises while the position changed less than POV_FLY_HOLD_STEPS ago, else it sinks.
+static int thing_air(const pov_thing_t *t, unsigned long step)
+{
+    unsigned long flip = t->moved_step + POV_FLY_HOLD_STEPS;
+    unsigned long from = t->air_step;
+    long          air = t->air;
+
+    if (from < flip)
+    {
+        unsigned long to = step < flip ? step : flip;
+
+        air += (long)(to - from);
+        from = to;
+        if (air > POV_AIR_STEPS)
+        {
+            air = POV_AIR_STEPS;
+        }
+    }
+    if (step > from)
+    {
+        air -= (long)(step - from);
+        if (air < 0)
+        {
+            air = 0;
+        }
+    }
+    return (int)air;
+}
+
+// The frame of a kind's sprite and the height over its floor that a thing shows at `step`. A flier perched is on the floor;
+// in the air it beats its wings, floats at its lift and swings up and down by a few units; landing and take-off are eased.
+static void thing_look(const pov_thing_t *t, unsigned long step, int *look, int *lift)
+{
+    const int kind = t->kind;
+
+    *look = 0;
+    *lift = s_thing_kind[kind].lift;
+    if (s_thing_kind[kind].motion == MOTION_FLIER)
+    {
+        const int air = thing_air(t, step);
+        const double k = (double)air / POV_AIR_STEPS;
+        const double ease = k * k * (3.0 - 2.0 * k);
+        static const unsigned char beat[POV_BEAT_STEPS] = { LOOK_GLIDE, LOOK_GLIDE, LOOK_UP, LOOK_UP, LOOK_UP,
+                                                            LOOK_GLIDE, LOOK_GLIDE, LOOK_DOWN, LOOK_DOWN, LOOK_DOWN };
+        // the swing is sampled where the wings change their look, so that a flier needs a new picture at those steps only
+        static const unsigned char beat_from[POV_BEAT_STEPS] = { 0, 0, 2, 2, 2, 5, 5, 7, 7, 7 };
+        const unsigned phase = (unsigned)((step + t->seed * 3u) % POV_BEAT_STEPS);
+        const unsigned long sampled = step - (phase - beat_from[phase]);
+        const double swing = sin(6.283185307179586 * (double)((sampled + t->seed * 17u) % POV_BOB_STEPS) / POV_BOB_STEPS);
+
+        *lift = (int)floor(s_thing_kind[kind].lift * ease + POV_BOB_UNITS * swing * ease + 0.5);
+        if (s_theme_on && sprites[s_thing_kind[kind].sprite].numframes >= LOOKS)
+        {
+            *look = air == 0 ? LOOK_PERCHED : beat[phase];
+        }
+    }
+}
+
 static void thing_place(int id, int kind, fixed_t x, fixed_t y, angle_t angle)
 {
     pov_thing_t *t = &s_things[id];
 
+    if (!t->used || t->kind != kind)
+    {
+        // seen for the first time: a flier is taken to be in flight (it entered the window moving)
+        t->moved_step = s_step;
+        t->air = POV_AIR_STEPS;
+        t->air_step = s_step;
+    }
+    else
+    {
+        t->air = thing_air(t, s_step);
+        t->air_step = s_step;
+        if (x != t->moved_x || y != t->moved_y)
+        {
+            t->moved_step = s_step;
+        }
+    }
+    t->moved_x = x;
+    t->moved_y = y;
+    t->seed = (unsigned)id;
+    t->shown_look = -1;
     thing_unlink(t);
     memset(&t->mo, 0, sizeof(t->mo));
     t->mo.x = x;
@@ -874,6 +974,28 @@ static void camera_place(fixed_t x, fixed_t y, angle_t angle)
     s_dirty = 1;
 }
 
+// Whether a thing would look different now (live mode: a perched flier and a still world cost nothing).
+static int things_changed(void)
+{
+    int i;
+
+    for (i = 0; i < POVC_MAX_THINGS; i++)
+    {
+        const pov_thing_t *t = &s_things[i];
+        int look, lift;
+
+        if (t->used && s_thing_kind[t->kind].motion != MOTION_NONE)
+        {
+            thing_look(t, s_step, &look, &lift);
+            if (look != t->shown_look || lift != t->shown_lift)
+            {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 // Floors may have changed since a thing was placed: z follows the floor of its cell; the eye
 // follows the floor of the cell the camera stands in.
 static void commit(void)
@@ -887,7 +1009,13 @@ static void commit(void)
 
         if (t->used)
         {
-            t->mo.z = t->mo.subsector->sector->floorheight + s_thing_kind[t->kind].lift * FRACUNIT;
+            int look, lift;
+
+            thing_look(t, s_step, &look, &lift);
+            t->shown_look = look;
+            t->shown_lift = lift;
+            t->mo.frame = s_thing_kind[t->kind].frame + look;
+            t->mo.z = t->mo.subsector->sector->floorheight + lift * FRACUNIT;
         }
     }
     p->mo->z = p->mo->subsector->sector->floorheight;
@@ -1612,7 +1740,6 @@ static int level_loaded(void)
 #define THEME_LUMP_SIZE 520
 
 extern int pov_gamma_off;      // i_video.c
-static int s_theme_on = 0;
 static int s_outline_on = 0;
 static unsigned char s_outline_index = 0;
 static unsigned char s_outline_of[256];    // per colour index: the index of a line drawn on a point of it (haze, POVFOG)
@@ -2323,6 +2450,10 @@ void POV_ControlTick(void)
     if (s_live && s_moving_n > 0 && s_step != s_drawn_step)
     {
         s_dirty = 1;        // something travels and the clock moved: the next picture
+    }
+    if (s_live && s_step != s_drawn_step && things_changed())
+    {
+        s_dirty = 1;        // a wing beat, a swing or a landing: only when the picture would differ
     }
     if (s_quit)
     {

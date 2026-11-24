@@ -8,6 +8,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "${ROOT}/tests/run_limited.sh"
 IWAD="${POV_TEST_IWAD:-${ROOT}/assets/freedoom/freedoom1.wad}"
 BIN="${ROOT}/doomgeneric/cosmergon-pov-headless"
 OLD="${ROOT}/doomgeneric/cosmergon-pov-headless-upstream"
@@ -30,8 +31,8 @@ ok "build (raised and upstream limits)"
 # run <binary> <wad> <outdir> <frames> <every> ; never a window: no DISPLAY, no stdin
 run() {
     mkdir -p "$3"
-    env -u DISPLAY -u WAYLAND_DISPLAY POV_OUT="$3" POV_EVERY="$5" POV_FRAMES="$4" \
-        timeout 60 "$1" -iwad "${IWAD}" -file "$2" -warp 1 1 </dev/null >/dev/null 2>"$3.err"
+    run_limited 60 env -u DISPLAY -u WAYLAND_DISPLAY POV_OUT="$3" POV_EVERY="$5" POV_FRAMES="$4" \
+        "$1" -iwad "${IWAD}" -file "$2" -warp 1 1 </dev/null >/dev/null 2>"$3.err"
 }
 
 # name:x,y,angle

@@ -34,13 +34,13 @@ count=$(ls "${WORK}/a"/frame-*.ppm 2>/dev/null | wc -l)
 # header "P6\n640 400\n255\n" is 15 bytes
 expected=$((15 + 3 * 640 * 400))
 for f in "${WORK}/a"/frame-*.ppm; do
-    size=$(stat -c %s "${f}")
+    size=$(wc -c <"${f}" | tr -d " ")
     [ "${size}" -eq "${expected}" ] || fail "${f} has ${size} bytes, expected ${expected}"
 done
 ok "frame sizes checked (${expected} bytes)"
 
 last="${WORK}/a/frame-000350.ppm"
-colors=$(tail -c +16 "${last}" | od -An -v -tx1 -w3 | sort -u | wc -l)
+colors=$(python3 "${ROOT}/tools/ppm_stats.py" colors "${last}")
 [ "${colors}" -gt 16 ] && ok "late frame has ${colors} distinct colors" || fail "late frame is nearly one color (${colors})"
 
 # no dialog helper may be built in: the binary must not know any dialog program
@@ -53,8 +53,10 @@ env -u DISPLAY -u WAYLAND_DISPLAY POV_OUT="${WORK}" "${BIN}" -iwad "${WORK}/miss
 if [ "${rc}" -ne 0 ] && grep -q "not found" "${WORK}/f2.err"; then ok "missing IWAD fails (exit ${rc})"; else fail "missing IWAD: exit ${rc}"; fi
 
 run "${WORK}/b"
-sum_a="$(cd "${WORK}/a" && sha256sum frame-*.ppm 2>/dev/null)"
-sum_b="$(cd "${WORK}/b" && sha256sum frame-*.ppm 2>/dev/null)"
+# sha256sum is GNU coreutils; macOS ships shasum
+if command -v sha256sum >/dev/null 2>&1; then SHA="sha256sum"; else SHA="shasum -a 256"; fi
+sum_a="$(cd "${WORK}/a" && ${SHA} frame-*.ppm 2>/dev/null)"
+sum_b="$(cd "${WORK}/b" && ${SHA} frame-*.ppm 2>/dev/null)"
 if [ -n "${sum_a}" ] && [ "${sum_a}" = "${sum_b}" ]; then
     ok "two runs are bit-identical"
 else

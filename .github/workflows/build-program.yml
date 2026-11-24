@@ -1,0 +1,101 @@
+# Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Builds the window program (Makefile.pov) with SDL2 linked in statically, for three targets, and
+# uploads one archive per target as a run artifact. No release, no tag, no write permission.
+name: Build program
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.os_name }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Oldest hosted Ubuntu x86_64 image: the program asks for the glibc of this image, no newer.
+          - { runner: ubuntu-22.04,    os_name: linux, arch: x86_64 }
+          # Native on Apple silicon.
+          - { runner: macos-15,        os_name: macos, arch: arm64,  target: "11.0" }
+          # Native on an Intel image (macos-15-intel); no cross compile, so the result can be inspected as built.
+          - { runner: macos-15-intel,  os_name: macos, arch: x86_64, target: "11.0" }
+    env:
+      NAME: cosmergon-pov-${{ matrix.os_name }}-${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Development headers for the window system (Linux; SDL loads the libraries itself at run time)
+        if: matrix.os_name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxfixes-dev libxss-dev \
+            libxkbcommon-dev libwayland-dev libwayland-bin wayland-protocols libegl1-mesa-dev libgl1-mesa-dev
+
+      - name: SDL2, static (pinned source archive, SHA-256 checked in the script)
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target }}
+        run: bash scripts/build-sdl2-static.sh "${RUNNER_TEMP}/sdl2" "${RUNNER_TEMP}/sdl2-work"
+
+      - name: Program
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target }}
+        run: |
+          make -C doomgeneric -f Makefile.pov -j4 \
+            SDL2_CONFIG="${RUNNER_TEMP}/sdl2/bin/sdl2-config" SDL2_STATIC=1
+
+      - name: Proof, Linux (no SDL library, glibc asked for)
+        if: matrix.os_name == 'linux'
+        run: |
+          file doomgeneric/cosmergon-pov
+          ldd doomgeneric/cosmergon-pov
+          if ldd doomgeneric/cosmergon-pov | grep -qi sdl; then echo "FAIL: SDL is linked dynamically" >&2; exit 1; fi
+          echo "glibc asked for: $(objdump -T doomgeneric/cosmergon-pov | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n 1)"
+          ldd --version | head -n 1
+
+      - name: Proof and signature, macOS (no SDL library, ad hoc signature)
+        if: matrix.os_name == 'macos'
+        run: |
+          file doomgeneric/cosmergon-pov
+          otool -L doomgeneric/cosmergon-pov
+          if otool -L doomgeneric/cosmergon-pov | grep -qi sdl; then echo "FAIL: SDL is linked dynamically" >&2; exit 1; fi
+          otool -l doomgeneric/cosmergon-pov | grep -A3 LC_BUILD_VERSION
+          codesign -s - --force doomgeneric/cosmergon-pov
+          codesign -v --verbose=2 doomgeneric/cosmergon-pov
+
+      - name: Archive
+        run: |
+          python3 tools/make_map.py          # assets/cosmergon.wad: the program looks for it next to itself
+          mkdir -p "dist/${NAME}"
+          cp doomgeneric/cosmergon-pov doomgeneric/capabilities assets/cosmergon.wad LICENSE "dist/${NAME}/"
+          cp "${RUNNER_TEMP}/sdl2/LICENSE-SDL2.txt" "dist/${NAME}/"
+          printf 'Source: https://github.com/%s at %s\nSDL2 2.32.10 (zlib licence, LICENSE-SDL2.txt) is linked in.\nGame data (Freedoom) is not part of this archive: scripts/download-freedoom.sh.\n' \
+            "${GITHUB_REPOSITORY}" "${GITHUB_SHA}" > "dist/${NAME}/SOURCE.txt"
+          python3 - "dist/${NAME}" <<'PY'
+          import hashlib, os, sys
+          d = sys.argv[1]
+          with open(os.path.join(d, "SHA256SUMS"), "w") as out:
+              for n in sorted(os.listdir(d)):
+                  if n != "SHA256SUMS":
+                      out.write(hashlib.sha256(open(os.path.join(d, n), "rb").read()).hexdigest() + "  " + n + "\n")
+          PY
+          tar -czf "dist/${NAME}.tar.gz" -C dist "${NAME}"
+          python3 - "dist/${NAME}.tar.gz" <<'PY' > "dist/${NAME}.tar.gz.sha256"
+          import hashlib, os, sys
+          p = sys.argv[1]
+          print(hashlib.sha256(open(p, "rb").read()).hexdigest() + "  " + os.path.basename(p))
+          PY
+          cat "dist/${NAME}/SHA256SUMS" "dist/${NAME}.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.NAME }}
+          path: |
+            dist/${{ env.NAME }}.tar.gz
+            dist/${{ env.NAME }}.tar.gz.sha256
+          if-no-files-found: error

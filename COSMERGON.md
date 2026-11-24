@@ -16,7 +16,11 @@ License: GPL-2.0 (see `LICENSE`, unchanged).
   `tests/test_world.py`: the sky as a place in the world: time of day, clouds with depth, neighbour cubes, haze ("The sky").
 - `tools/measure_ink.py`, `tools/measure_far.py`, `tests/test_ink.py`: stroke thickness, reach of the floor strokes and the
   calm of the far floor ("Themes").
-- `tests/test_headless.sh`: smoke test.
+- `tests/test_headless.sh`: smoke test. `tests/run_limited.sh`: `run_limited <seconds> <command>`, a bounded wait with shell
+  built-ins (macOS has no `timeout`; bash 3.2), exit 124 and a message when the limit is over.
+- `scripts/build-sdl2-static.sh`, `.github/workflows/build-program.yml` (manual run only): the window program with SDL2 linked in
+  statically for Linux x86_64, macOS arm64 and macOS x86_64, one archive per target as a run artifact (nothing is released).
+  Local equivalent: `make -f Makefile.pov SDL2_CONFIG=<prefix>/bin/sdl2-config SDL2_STATIC=1`.
 - `tests/test_size.py`, `tools/measure_size.py`: picture size (package P5, "Picture size" below).
 - `tools/ring_art.py`, `tools/ring_samples.py`, `tools/measure_rim.py`, `tests/test_ring.py`: the field's rim, a ring of cells one storey high with bunks and shaft portals as recesses ("The field's rim").
 - `tests/test_rise.py`, `tools/rise_samples.py`, `tools/measure_rise.py`: cells rise out of the ground and sink into it ("Rise and sink").
@@ -237,6 +241,9 @@ for both makefiles; `pov_stdin.c` reads the control input for both platform laye
 - Without `-iwad` the program takes `freedoom1.wad` and `cosmergon.wad` from the folder it lies in.
 - `POV_FPS` steps a second (default 35). A step draws only when a line changed something, once at
   the start, and shows the last picture again when the window is uncovered or resized.
+- Headless live mode (`POV_CONTROL_LIVE=1`) runs on the monotonic clock like the window: a tick is due every `POV_LIVE_MS` real
+  milliseconds and the pause is only the wait until then, so a slow sleep does not stretch the program's time. The last
+  stderr line of `finish()` reports `ticks` and `ticks_per_s`.
 - At the end stderr carries frames, work per frame, the slowest frame and the share spent handing
   the picture to the window system.
 - The picture has the size of the window, one point a pixel, and follows a resize ("Picture size").

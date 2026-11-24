@@ -3,6 +3,9 @@
 # cosmergon-pov: the window program (SDL2, no sound). Built on the device:
 #   make -f Makefile.pov -j4
 # Needs sdl2-config (SDL2 or sdl2-compat). No SDL2_mixer.
+# A self-contained program (SDL2 linked in): build a static SDL2 with scripts/build-sdl2-static.sh <prefix>, then
+#   make -f Makefile.pov SDL2_CONFIG=<prefix>/bin/sdl2-config SDL2_STATIC=1
+# Without these two the system's SDL2 is used, as before.
 
 ifeq ($(V),1)
 	VB=''
@@ -11,9 +14,16 @@ else
 endif
 
 CC?=gcc
-CFLAGS+=-O2 -DPOV_NO_ERROR_DIALOG -DPOV_NO_WIPE -DPOV_VIEW_ONLY -MMD -MP $(shell sdl2-config --cflags)
+SDL2_CONFIG?=sdl2-config
+ifeq ($(SDL2_STATIC),1)
+SDL2_LIBS_OPTION=--static-libs
+else
+SDL2_LIBS_OPTION=--libs
+endif
+
+CFLAGS+=-O2 -DPOV_NO_ERROR_DIALOG -DPOV_NO_WIPE -DPOV_VIEW_ONLY -MMD -MP $(shell $(SDL2_CONFIG) --cflags)
 LDFLAGS+=
-LIBS+=-lm -lc $(shell sdl2-config --libs)
+LIBS+=-lm -lc $(shell $(SDL2_CONFIG) $(SDL2_LIBS_OPTION))
 
 OBJDIR=build-pov
 OUTPUT=cosmergon-pov

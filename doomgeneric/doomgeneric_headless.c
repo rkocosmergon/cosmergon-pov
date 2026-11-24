@@ -21,7 +21,9 @@
 //   POV_CONTROL_LIVE  with -pov-control: 1 = never block on stdin, draw a frame in every tick
 //                     in which something changed
 //                     (the way a window platform reads); unset/0 = block until `next`/`quit`/EOF
-//   POV_LIVE_MS       live mode: real milliseconds slept per tick (default 10)
+//   POV_LIVE_MS       live mode: a tick is due every this many real milliseconds (default 10). The clock of the
+//                     program is then the monotonic clock (as in the window program): a pause is only the wait
+//                     until the next tick is due, so a slow sleep or a slow tick never stretches the program's time
 //   POV_WINDOW        with -pov-control: <w>x<h>, the size of a window that this run pretends to have: the
 //                     picture is chosen as the window platform does (POV_ControlFitSize: the window's own size
 //                     inside the limits, above them the largest picture of its shape). Test hook; -pov-size wins.
@@ -53,6 +55,10 @@ static unsigned long s_max_frames = 700;
 static const char *s_out_dir = NULL;
 static int s_control = 0;
 static unsigned long s_live_ms = 10;
+static int s_live_clock = 0;            // live mode: DG_GetTicksMs is the monotonic clock, not counted pauses
+static int s_started = 0;               // s_start is set (DG_Init ran)
+static double s_next_tick_ms = 0.0;     // live: the clock reading at which the next tick is due
+static unsigned long s_ticks = 0;       // calls of doomgeneric_Tick
 static struct timespec s_start;
 // Time spent drawing, without writing the frame: from the end of the previous DG_DrawFrame (or
 // the start of the first step) to the call of this one. Includes reading control lines, the
@@ -184,7 +190,9 @@ void DG_Init(void)
                     POV_ControlFitSize(w, h) == 0 ? "not followed" : "followed");
         }
     }
+    s_live_clock = s_control && POV_ControlIsLive();
     clock_gettime(CLOCK_MONOTONIC, &s_start);
+    s_started = 1;
 }
 
 static void finish(void)
@@ -197,8 +205,9 @@ static void finish(void)
         write_frame(s_frames);
     }
 
-    fprintf(stderr, "headless: frames=%lu real_ms=%.1f ms_per_frame=%.3f\n",
-            s_frames, ms, s_frames > 0 ? ms / (double)s_frames : 0.0);
+    fprintf(stderr, "headless: frames=%lu real_ms=%.1f ms_per_frame=%.3f ticks=%lu ticks_per_s=%.1f live=%d\n",
+            s_frames, ms, s_frames > 0 ? ms / (double)s_frames : 0.0, s_ticks,
+            ms > 0.0 ? (double)s_ticks * 1000.0 / ms : 0.0, s_live_clock);
     fprintf(stderr, "headless: size=%dx%d work_ms=%.3f worst_ms=%.3f (per frame, without writing the frames)\n",
             DG_OutW, DG_OutH, s_work_frames > 0 ? s_work_total_ms / (double)s_work_frames : 0.0,
             s_work_worst_ms);
@@ -225,7 +234,10 @@ void DG_DrawFrame(void)
         }
     }
     s_frames++;
-    s_virtual_ms += POV_MS_PER_FRAME;
+    if (!s_live_clock)
+    {
+        s_virtual_ms += POV_MS_PER_FRAME;
+    }
     if (s_frames % s_every == 0)
     {
         write_frame(s_frames);
@@ -237,13 +249,35 @@ void DG_DrawFrame(void)
     }
 }
 
+static void sleep_real_ms(double ms)
+{
+    struct timespec pause;
+
+    if (ms <= 0.0)
+    {
+        return;
+    }
+    pause.tv_sec = (time_t)(ms / 1000.0);
+    pause.tv_nsec = (long)((ms - (double)pause.tv_sec * 1000.0) * 1e6);
+    nanosleep(&pause, NULL);
+}
+
 void DG_SleepMs(uint32_t ms)
 {
+    if (s_live_clock)
+    {
+        sleep_real_ms((double)ms);      // the clock is the real one: waiting takes the time it says
+        return;
+    }
     s_virtual_ms += ms;
 }
 
 uint32_t DG_GetTicksMs(void)
 {
+    if (s_live_clock && s_started)
+    {
+        return (uint32_t)elapsed_ms();
+    }
     return s_virtual_ms;
 }
 
@@ -269,13 +303,20 @@ int main(int argc, char **argv)
             finish();
         }
         doomgeneric_Tick();
-        if (s_control && POV_ControlIsLive())
+        s_ticks++;
+        if (s_live_clock)
         {
-            // live: one tick every POV_LIVE_MS, whether it drew or not
-            struct timespec pause = { (time_t)(s_live_ms / 1000), (long)(s_live_ms % 1000) * 1000000L };
+            // live: a tick is due every POV_LIVE_MS on the monotonic clock, whether it drew or not. The pause
+            // is only the wait until then; a tick that ran late is followed at once (no burst: the schedule
+            // restarts from now when more than one period behind).
+            double now = elapsed_ms();
 
-            nanosleep(&pause, NULL);
-            s_virtual_ms += s_live_ms;      // a live tick lasts that long on the virtual clock (cloud drift)
+            s_next_tick_ms += (double)s_live_ms;
+            if (s_next_tick_ms < now - (double)s_live_ms)
+            {
+                s_next_tick_ms = now;
+            }
+            sleep_real_ms(s_next_tick_ms - now);
         }
     }
     return 0;

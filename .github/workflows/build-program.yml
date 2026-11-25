@@ -1,7 +1,10 @@
 # Copyright (C) 2026 RKO Consult UG (haftungsbeschraenkt)
 # SPDX-License-Identifier: GPL-2.0-or-later
 # Builds the window program (Makefile.pov) with SDL2 linked in statically, for three targets, and
-# uploads one archive per target as a run artifact. No release, no tag, no write permission.
+# uploads one archive per target as a run artifact. Each archive gets a build provenance attestation
+# (Sigstore, stored by GitHub): anyone can check that a released archive came from this workflow at
+# a named commit, `gh attestation verify <archive> --repo rkocosmergon/cosmergon-pov`. The release
+# itself is made by hand from the artifacts of one run; no tag, no write to the repository here.
 name: Build program
 
 on:
@@ -14,6 +17,10 @@ jobs:
   build:
     name: ${{ matrix.os_name }} ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write      # the attestation's signing certificate (Sigstore)
+      attestations: write  # stores the attestation with the repository
     strategy:
       fail-fast: false
       matrix:
@@ -91,6 +98,11 @@ jobs:
           print(hashlib.sha256(open(p, "rb").read()).hexdigest() + "  " + os.path.basename(p))
           PY
           cat "dist/${NAME}/SHA256SUMS" "dist/${NAME}.tar.gz.sha256"
+
+      - name: Build provenance of the archive
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/${{ env.NAME }}.tar.gz
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

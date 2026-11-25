@@ -19,7 +19,9 @@ License: GPL-2.0 (see `LICENSE`, unchanged).
 - `tests/test_headless.sh`: smoke test. `tests/run_limited.sh`: `run_limited <seconds> <command>`, a bounded wait with shell
   built-ins (macOS has no `timeout`; bash 3.2), exit 124 and a message when the limit is over.
 - `scripts/build-sdl2-static.sh`, `.github/workflows/build-program.yml` (manual run only): the window program with SDL2 linked in
-  statically for Linux x86_64, macOS arm64 and macOS x86_64, one archive per target as a run artifact (nothing is released).
+  statically for Linux x86_64, macOS arm64 and macOS x86_64, one archive per target as a run artifact, each with a build
+  provenance attestation. A pre-release is made by hand from the artifacts of one run, unchanged; check an archive with
+  `gh attestation verify cosmergon-pov-linux-x86_64.tar.gz --repo rkocosmergon/cosmergon-pov`.
   Local equivalent: `make -f Makefile.pov SDL2_CONFIG=<prefix>/bin/sdl2-config SDL2_STATIC=1`.
 - `tests/test_size.py`, `tools/measure_size.py`: picture size (package P5, "Picture size" below).
 - `tools/ring_art.py`, `tools/ring_samples.py`, `tools/measure_rim.py`, `tests/test_ring.py`: the field's rim, a ring of cells one storey high with bunks and shaft portals as recesses ("The field's rim").
